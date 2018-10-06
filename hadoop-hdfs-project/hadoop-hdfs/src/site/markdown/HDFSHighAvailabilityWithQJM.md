@@ -423,6 +423,14 @@ This guide describes high-level uses of each of these subcommands. For specific 
     **Note:** This is not yet implemented, and at present will always return
     success, unless the given NameNode is completely down.
 
+
+### Load Balancer Setup
+
+If you are running a set of NameNodes behind a Load Balancer (e.g. [Azure](https://docs.microsoft.com/en-us/azure/load-balancer/load-balancer-custom-probe-overview) or [AWS](https://docs.aws.amazon.com/elasticloadbalancing/latest/classic/elb-healthchecks.html) ) and would like the Load Balancer to point to the active NN, you can use the /isActive HTTP endpoint as a health probe.
+http://NN_HOSTNAME/isActive will return a 200 status code response if the NN is in Active HA State, 405 otherwise.
+
+
+
 Automatic Failover
 ------------------
 
@@ -631,6 +639,8 @@ When moving between versions of HDFS, sometimes the newer software can simply be
     the `'-upgrade'` flag.
 
 Note that if at any time you want to restart the NameNodes before finalizing or rolling back the upgrade, you should start the NNs as normal, i.e. without any special startup flag.
+
+**To query status of upgrade**, the operator will use the `` `hdfs dfsadmin -upgrade query' `` command while atleast one of the NNs is running. The command will return whether the NN upgrade process is finalized or not, for each NN.
 
 **To finalize an HA upgrade**, the operator will use the `` `hdfs dfsadmin -finalizeUpgrade' `` command while the NNs are running and one of them is active. The active NN at the time this happens will perform the finalization of the shared log, and the NN whose local storage directories contain the previous FS state will delete its local state.
 

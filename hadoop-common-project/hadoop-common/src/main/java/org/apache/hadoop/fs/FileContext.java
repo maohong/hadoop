@@ -24,6 +24,7 @@ import java.io.OutputStream;
 import java.net.URI;
 import java.security.PrivilegedExceptionAction;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.HashSet;
@@ -34,6 +35,8 @@ import java.util.Set;
 import java.util.Stack;
 import java.util.TreeSet;
 import java.util.Map.Entry;
+
+import javax.annotation.Nonnull;
 
 import org.apache.hadoop.HadoopIllegalArgumentException;
 import org.apache.hadoop.classification.InterfaceAudience;
@@ -216,10 +219,12 @@ public class FileContext {
    * The FileContext is defined by.
    *  1) defaultFS (slash)
    *  2) wd
-   *  3) umask (Obtained by FsPermission.getUMask(conf))
+   *  3) umask (explicitly set via setUMask(),
+   *      falling back to FsPermission.getUMask(conf))
    */   
   private final AbstractFileSystem defaultFS; //default FS for this FileContext.
   private Path workingDir;          // Fully qualified
+  private FsPermission umask;
   private final Configuration conf;
   private final UserGroupInformation ugi;
   final boolean resolveSymlinks;
@@ -572,7 +577,7 @@ public class FileContext {
    * @return the umask of this FileContext
    */
   public FsPermission getUMask() {
-    return FsPermission.getUMask(conf);
+    return (umask != null ? umask : FsPermission.getUMask(conf));
   }
   
   /**
@@ -580,9 +585,8 @@ public class FileContext {
    * @param newUmask  the new umask
    */
   public void setUMask(final FsPermission newUmask) {
-    FsPermission.setUMask(conf, newUmask);
+    this.umask = newUmask;
   }
-  
   
   /**
    * Resolve the path following any symlinks or mount points
@@ -692,6 +696,69 @@ public class FileContext {
         return fs.create(p, createFlag, updatedOpts);
       }
     }.resolve(this, absF);
+  }
+
+  /**
+   * {@link FSDataOutputStreamBuilder} for {@liink FileContext}.
+   */
+  private static final class FCDataOutputStreamBuilder extends
+      FSDataOutputStreamBuilder<
+        FSDataOutputStream, FCDataOutputStreamBuilder> {
+    private final FileContext fc;
+
+    private FCDataOutputStreamBuilder(
+        @Nonnull FileContext fc, @Nonnull Path p) throws IOException {
+      super(fc, p);
+      this.fc = fc;
+      Preconditions.checkNotNull(fc);
+    }
+
+    @Override
+    protected FCDataOutputStreamBuilder getThisBuilder() {
+      return this;
+    }
+
+    @Override
+    public FSDataOutputStream build() throws IOException {
+      final EnumSet<CreateFlag> flags = getFlags();
+      List<CreateOpts> createOpts = new ArrayList<>(Arrays.asList(
+          CreateOpts.blockSize(getBlockSize()),
+          CreateOpts.bufferSize(getBufferSize()),
+          CreateOpts.repFac(getReplication()),
+          CreateOpts.perms(getPermission())
+      ));
+      if (getChecksumOpt() != null) {
+        createOpts.add(CreateOpts.checksumParam(getChecksumOpt()));
+      }
+      if (getProgress() != null) {
+        createOpts.add(CreateOpts.progress(getProgress()));
+      }
+      if (isRecursive()) {
+        createOpts.add(CreateOpts.createParent());
+      }
+      return fc.create(getPath(), flags,
+          createOpts.toArray(new CreateOpts[0]));
+    }
+  }
+
+  /**
+   * Create a {@link FSDataOutputStreamBuilder} for creating or overwriting
+   * a file on indicated path.
+   *
+   * @param f the file path to create builder for.
+   * @return {@link FSDataOutputStreamBuilder} to build a
+   *         {@link FSDataOutputStream}.
+   *
+   * Upon {@link FSDataOutputStreamBuilder#build()} being invoked,
+   * builder parameters will be verified by {@link FileContext} and
+   * {@link AbstractFileSystem#create}. And filesystem states will be modified.
+   *
+   * Client should expect {@link FSDataOutputStreamBuilder#build()} throw the
+   * same exceptions as create(Path, EnumSet, CreateOpts...).
+   */
+  public FSDataOutputStreamBuilder<FSDataOutputStream, ?> create(final Path f)
+      throws IOException {
+    return new FCDataOutputStreamBuilder(this, f).create();
   }
 
   /**

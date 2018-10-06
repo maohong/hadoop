@@ -65,6 +65,18 @@ Note that YARN service framework assigns `COMPONENT_INSTANCE_NAME` for each cont
 assigned `0` since it is the first and only instance for the `hbasemaster` component. In case of `regionserver` component, it can have multiple containers
  and so be named as such: `regionserver-0`, `regionserver-1`, `regionserver-2` ... etc
 
+Each YARN service component also has Multi-A Records for container fault tolerance or load balancing via RegistryDNS.  The naming format is defined as:
+```
+${COMPONENT_NAME}.${SERVICE_NAME}.${USER}.${DOMAIN}
+```
+
+For example, a component named www for application app launched by Chuck with 3 containers will have DNS records that look like:
+```
+www.app.chuck.example.com IN A 123.123.123.1
+www.app.chuck.example.com IN A 123.123.123.1
+www.app.chuck.example.com IN A 123.123.123.1
+```
+
 `Disclaimer`: The DNS implementation is still experimental. It should not be used as a fully-functional DNS.
 
 
@@ -82,10 +94,10 @@ section of [Registry DNS](RegistryDNS.html).
   </property>
 
   <property>
-    <description>The port number for the DNS listener. The default port is 5353.
+    <description>The port number for the DNS listener. The default port is 5335.
     If the standard privileged port 53 is used, make sure start the DNS with jsvc support.</description>
     <name>hadoop.registry.dns.bind-port</name>
-    <value>5353</value>
+    <value>5335</value>
   </property>
 
   <property>
@@ -123,7 +135,7 @@ To configure Registry DNS to serve reverse lookup for `172.17.0.0/24`
   </property>
 ```
 ## Start Registry DNS Server
-By default, the DNS server runs on non-privileged port `5353`. Start the server
+By default, the DNS server runs on non-privileged port `5335`. Start the server
 with:
 ```
 yarn --daemon start registrydns

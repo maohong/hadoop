@@ -573,15 +573,7 @@ public class LinuxContainerExecutor extends ContainerExecutor {
       return handleExitCode(e, container, containerId);
     } finally {
       resourcesHandler.postExecute(containerId);
-
-      try {
-        if (resourceHandlerChain != null) {
-          resourceHandlerChain.postComplete(containerId);
-        }
-      } catch (ResourceHandlerException e) {
-        LOG.warn("ResourceHandlerChain.postComplete failed for " +
-            "containerId: " + containerId + ". Exception: " + e);
-      }
+      postComplete(containerId);
     }
 
     return 0;
@@ -619,17 +611,7 @@ public class LinuxContainerExecutor extends ContainerExecutor {
       if (exitCode ==
           ExitCode.INVALID_CONTAINER_EXEC_PERMISSIONS.getExitCode() ||
           exitCode ==
-              ExitCode.INVALID_CONFIG_FILE.getExitCode() ||
-          exitCode ==
-              ExitCode.COULD_NOT_CREATE_SCRIPT_COPY.getExitCode() ||
-          exitCode ==
-              ExitCode.COULD_NOT_CREATE_CREDENTIALS_FILE.getExitCode() ||
-          exitCode ==
-              ExitCode.COULD_NOT_CREATE_WORK_DIRECTORIES.getExitCode() ||
-          exitCode ==
-              ExitCode.COULD_NOT_CREATE_APP_LOG_DIRECTORIES.getExitCode() ||
-          exitCode ==
-              ExitCode.COULD_NOT_CREATE_TMP_DIRECTORIES.getExitCode()) {
+              ExitCode.INVALID_CONFIG_FILE.getExitCode()) {
         throw new ConfigurationException(
             "Linux Container Executor reached unrecoverable exception", e);
       }
@@ -721,14 +703,7 @@ public class LinuxContainerExecutor extends ContainerExecutor {
       return super.reacquireContainer(ctx);
     } finally {
       resourcesHandler.postExecute(containerId);
-      if (resourceHandlerChain != null) {
-        try {
-          resourceHandlerChain.postComplete(containerId);
-        } catch (ResourceHandlerException e) {
-          LOG.warn("ResourceHandlerChain.postComplete failed for " +
-              "containerId: " + containerId + " Exception: " + e);
-        }
-      }
+      postComplete(containerId);
     }
   }
 
@@ -798,6 +773,8 @@ public class LinuxContainerExecutor extends ContainerExecutor {
       logOutput(e.getOutput());
       throw new IOException("Error in reaping container "
           + container.getContainerId().toString() + " exit = " + retCode, e);
+    } finally {
+      postComplete(container.getContainerId());
     }
     return true;
   }
@@ -957,15 +934,29 @@ public class LinuxContainerExecutor extends ContainerExecutor {
       PrivilegedOperationExecutor privOpExecutor =
           PrivilegedOperationExecutor.getInstance(super.getConf());
       if (DockerCommandExecutor.isRemovable(
-          DockerCommandExecutor.getContainerStatus(containerId,
-              super.getConf(), privOpExecutor, nmContext))) {
+          DockerCommandExecutor.getContainerStatus(containerId, privOpExecutor,
+              nmContext))) {
         LOG.info("Removing Docker container : " + containerId);
-        DockerRmCommand dockerRmCommand = new DockerRmCommand(containerId);
+        DockerRmCommand dockerRmCommand = new DockerRmCommand(containerId,
+            ResourceHandlerModule.getCgroupsRelativeRoot());
         DockerCommandExecutor.executeDockerCommand(dockerRmCommand, containerId,
-            null, super.getConf(), privOpExecutor, false, nmContext);
+            null, privOpExecutor, false, nmContext);
       }
     } catch (ContainerExecutionException e) {
       LOG.warn("Unable to remove docker container: " + containerId);
+    }
+  }
+
+  @VisibleForTesting
+  void postComplete(final ContainerId containerId) {
+    try {
+      if (resourceHandlerChain != null) {
+        LOG.debug("{} post complete", containerId);
+        resourceHandlerChain.postComplete(containerId);
+      }
+    } catch (ResourceHandlerException e) {
+      LOG.warn("ResourceHandlerChain.postComplete failed for " +
+          "containerId: {}. Exception: ", containerId, e);
     }
   }
 }

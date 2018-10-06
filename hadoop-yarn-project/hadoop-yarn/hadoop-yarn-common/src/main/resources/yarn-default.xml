@@ -265,6 +265,11 @@
   </property>
 
   <property>
+   <name>yarn.resourcemanager.resource-tracker.nm.ip-hostname-check</name>
+   <value>false</value>
+  </property>
+
+  <property>
     <description>Are acls enabled.</description>
     <name>yarn.acl.enable</name>
     <value>false</value>
@@ -677,6 +682,13 @@
   </property>
 
   <property>
+    <description>The range of values above base epoch that the RM will use before
+      wrapping around</description>
+    <name>yarn.resourcemanager.epoch.range</name>
+    <value>0</value>
+  </property>
+
+  <property>
     <description>The list of RM nodes in the cluster when HA is
       enabled. See description of yarn.resourcemanager.ha
       .enabled for full details on how this is used.</description>
@@ -765,7 +777,7 @@
   <property>
     <description>Maximum size in bytes for configurations that can be provided
       by application to RM for delegation token renewal.
-      By experiment, it's roughly 128 bytes per key-value pair.
+      By experiment, its roughly 128 bytes per key-value pair.
       The default value 12800 allows roughly 100 configs, may be less.
     </description>
     <name>yarn.resourcemanager.delegation-token.max-conf-size-bytes</name>
@@ -1052,7 +1064,16 @@
   </property>
 
   <property>
-    <description>Environment variables that should be forwarded from the NodeManager's environment to the container's.</description>
+    <description>
+      Environment variables that should be forwarded from the NodeManager's
+      environment to the container's, specified as a comma separated list of
+      VARNAME=value pairs.
+
+      To define environment variables individually, you can specify
+      multiple properties of the form yarn.nodemanager.admin-env.VARNAME,
+      where VARNAME is the name of the environment variable. This is the only
+      way to add a variable when its value contains commas.
+    </description>
     <name>yarn.nodemanager.admin-env</name>
     <value>MALLOC_ARENA_MAX=$MALLOC_ARENA_MAX</value>
   </property>
@@ -1710,19 +1731,35 @@
   </property>
 
   <property>
+    <description>Default container runtime to use.</description>
+    <name>yarn.nodemanager.runtime.linux.type</name>
+    <value></value>
+  </property>
+
+  <property>
     <description>This configuration setting determines the capabilities
       assigned to docker containers when they are launched. While these may not
       be case-sensitive from a docker perspective, it is best to keep these
-      uppercase. To run without any capabilites, set this value to
+      uppercase. To run without any capabilities, set this value to
       "none" or "NONE"</description>
     <name>yarn.nodemanager.runtime.linux.docker.capabilities</name>
     <value>CHOWN,DAC_OVERRIDE,FSETID,FOWNER,MKNOD,NET_RAW,SETGID,SETUID,SETFCAP,SETPCAP,NET_BIND_SERVICE,SYS_CHROOT,KILL,AUDIT_WRITE</value>
   </property>
 
   <property>
-    <description>This configuration setting determines if
-      privileged docker containers are allowed on this cluster.
-      Use with extreme care.</description>
+    <description>Default docker image to be used when the docker runtime is
+    selected.</description>
+    <name>yarn.nodemanager.runtime.linux.docker.image-name</name>
+    <value></value>
+  </property>
+
+  <property>
+    <description>This configuration setting determines if privileged docker
+      containers are allowed on this cluster. Privileged containers are granted
+      the complete set of capabilities and are not subject to the limitations
+      imposed by the device cgroup controller. In other words, privileged
+      containers can do almost everything that the host can do. Use with
+      extreme care.</description>
     <name>yarn.nodemanager.runtime.linux.docker.privileged-containers.allowed</name>
     <value>false</value>
   </property>
@@ -1795,6 +1832,27 @@
   </property>
 
   <property>
+    <description>The default list of read-only mounts to be bind-mounted
+      into all Docker containers that use DockerContainerRuntime.</description>
+    <name>yarn.nodemanager.runtime.linux.docker.default-ro-mounts</name>
+    <value></value>
+  </property>
+
+  <property>
+    <description>The default list of read-write mounts to be bind-mounted
+      into all Docker containers that use DockerContainerRuntime.</description>
+    <name>yarn.nodemanager.runtime.linux.docker.default-rw-mounts</name>
+    <value></value>
+  </property>
+
+  <property>
+    <description>The default list of tmpfs mounts to be mounted into all Docker
+      containers that use DockerContainerRuntime.</description>
+    <name>yarn.nodemanager.runtime.linux.docker.default-tmpfs-mounts</name>
+    <value></value>
+  </property>
+
+  <property>
     <description>The mode in which the Java Container Sandbox should run detailed by
       the JavaSandboxLinuxContainerRuntime.</description>
     <name>yarn.nodemanager.runtime.linux.sandbox-mode</name>
@@ -1841,14 +1899,6 @@
     </description>
     <name>yarn.nodemanager.linux-container-executor.cgroups.delete-timeout-ms</name>
     <value>1000</value>
-  </property>
-
-  <property>
-    <description>
-    The UNIX group that the linux-container-executor should run as.
-    </description>
-    <name>yarn.nodemanager.linux-container-executor.group</name>
-    <value></value>
   </property>
 
   <property>
@@ -1997,8 +2047,6 @@
     <value>false</value>
   </property>
 
-  <!--Docker configuration-->
-
   <property>
     <description>
     Adjustment to the container OS scheduling priority.  In Linux, passed
@@ -2142,7 +2190,7 @@
     <description>
     In the server side it indicates whether timeline service is enabled or not.
     And in the client side, users can enable it to indicate whether client wants
-    to use timeline service. If it's enabled in the client side along with
+    to use timeline service. If its enabled in the client side along with
     security, then yarn client tries to fetch the delegation tokens for the
     timeline server.
     </description>
@@ -2525,6 +2573,15 @@
 
   <property>
     <description>
+      The setting that controls how often in-memory app level
+      aggregation is kicked off in timeline collector.
+    </description>
+    <name>yarn.timeline-service.app-aggregation-interval-secs</name>
+    <value>15</value>
+  </property>
+
+  <property>
+    <description>
     The default hdfs location for flowrun coprocessor jar.
     </description>
     <name>yarn.timeline-service.hbase.coprocessor.jar.hdfs.location
@@ -2862,6 +2919,68 @@
     <value>1800000</value>
   </property>
 
+  <!-- Distributed Node Attributes Configuration -->
+  <property>
+    <description>
+      This property determines which provider will be plugged by the
+      node manager to collect node-attributes. Administrators can
+      configure "config", "script" or the class name of the provider.
+      Configured class needs to extend
+      org.apache.hadoop.yarn.server.nodemanager.nodelabels.NodeAttributesProvider.
+      If "config" is configured, then "ConfigurationNodeLabelsProvider" and if
+      "script" is configured, then "ScriptBasedNodeAttributesProvider"
+      will be used.
+    </description>
+    <name>yarn.nodemanager.node-attributes.provider</name>
+  </property>
+
+  <property>
+    <description>
+      The node attribute script NM runs to collect node attributes.
+      Script output Line starting with "NODE_ATTRIBUTE:" will be
+      considered as a record of node attribute, attribute name, type
+      and value should be delimited by comma. Each of such lines
+      will be parsed to a node attribute.
+    </description>
+    <name>yarn.nodemanager.node-attributes.provider.script.path</name>
+  </property>
+
+  <property>
+    <description>
+      Command arguments passed to the node attribute script.
+    </description>
+    <name>yarn.nodemanager.node-attributes.provider.script.opts</name>
+  </property>
+
+  <property>
+    <description>
+      Time interval that determines how long NM fetches node attributes
+      from a given provider. If -1 is configured then node labels are
+      retrieved from provider only during initialization. Defaults to 10 mins.
+    </description>
+    <name>yarn.nodemanager.node-attributes.provider.fetch-interval-ms</name>
+    <value>600000</value>
+  </property>
+
+  <property>
+    <description>
+      Timeout period after which NM will interrupt the node attribute
+      provider script which queries node attributes. Defaults to 20 mins.
+    </description>
+    <name>yarn.nodemanager.node-attributes.provider.fetch-timeout-ms</name>
+    <value>1200000</value>
+  </property>
+
+  <property>
+    <description>
+      When "yarn.nodemanager.node-attributes.provider" is configured with
+      "config" then ConfigurationNodeAttributesProvider fetches node attributes
+      from this parameter.
+    </description>
+    <name>yarn.nodemanager.node-attributes.provider.configured-node-attributes</name>
+    <value></value>
+  </property>
+
   <property>
     <description>
     Timeout in seconds for YARN node graceful decommission.
@@ -3017,6 +3136,15 @@
     </description>
     <name>yarn.nodemanager.log-aggregation.roll-monitoring-interval-seconds</name>
     <value>-1</value>
+  </property>
+
+  <property>
+    <description>Define how many aggregated log files per application per NM
+    we can have in remote file system. By default, the total number of
+    aggregated log files per application per NM is 30.
+    </description>
+    <name>yarn.nodemanager.log-aggregation.num-log-files-per-app</name>
+    <value>30</value>
   </property>
 
   <property>
@@ -3379,7 +3507,7 @@
     <description>
       Defines the limit of the diagnostics message of an application
       attempt, in kilo characters (character count * 1024).
-      When using ZooKeeper to store application state behavior, it's
+      When using ZooKeeper to store application state behavior, its
       important to limit the size of the diagnostic messages to
       prevent YARN from overwhelming ZooKeeper. In cases where
       yarn.resourcemanager.state-store.max-completed-applications is set to
@@ -3420,6 +3548,14 @@
     </description>
     <name>yarn.router.clientrm.interceptor-class.pipeline</name>
     <value>org.apache.hadoop.yarn.server.router.clientrm.DefaultClientRequestInterceptor</value>
+  </property>
+
+  <property>
+    <description>
+      The thread pool executor size of per user in Router ClientRM Service FederationClientInterceptor.
+    </description>
+    <name>yarn.router.interceptor.user.threadpool-size</name>
+    <value>5</value>
   </property>
 
   <property>
@@ -3512,7 +3648,7 @@
   </property>
  
   <property>
-    <name>yarn.resourcemanager.display.per-user-apps</name>
+    <name>yarn.webapp.filter-entity-list-by-user</name>
     <value>false</value>
       <description>
         Flag to enable display of applications per user as an admin
@@ -3794,4 +3930,73 @@
     <value>/usr/bin/numactl</value>
   </property>
 
+  <property>
+    <description>
+      Enable elastic memory control. This is a Linux only feature.
+      When enabled, the node manager adds a listener to receive an
+      event, if all the containers exceeded a limit.
+      The limit is specified by yarn.nodemanager.resource.memory-mb.
+      If this is not set, the limit is set based on the capabilities.
+      See yarn.nodemanager.resource.detect-hardware-capabilities
+      for details.
+      The limit applies to the physical or virtual (rss+swap) memory
+      depending on whether yarn.nodemanager.pmem-check-enabled or
+      yarn.nodemanager.vmem-check-enabled is set.
+    </description>
+    <name>yarn.nodemanager.elastic-memory-control.enabled</name>
+    <value>false</value>
+  </property>
+
+  <property>
+    <description>
+      The name of a JVM class. The class must implement the Runnable
+      interface. It is called,
+      if yarn.nodemanager.elastic-memory-control.enabled
+      is set and the system reaches its memory limit.
+      When called the handler must preempt a container,
+      since all containers are frozen by cgroups.
+      Once preempted some memory is released, so that the
+      kernel can resume all containers. Because of this the
+      handler has to act quickly.
+    </description>
+    <name>yarn.nodemanager.elastic-memory-control.oom-handler</name>
+    <value>org.apache.hadoop.yarn.server.nodemanager.containermanager.linux.resources.DefaultOOMHandler</value>
+  </property>
+
+  <property>
+    <description>
+      The path to the oom-listener tool. Elastic memory control is only
+      supported on Linux. It relies on kernel events. The tool forwards
+      these kernel events to the standard input, so that the node manager
+      can preempt containers, in and out-of-memory scenario.
+      You rarely need to update this setting.
+    </description>
+    <name>yarn.nodemanager.elastic-memory-control.oom-listener.path</name>
+    <value></value>
+  </property>
+
+  <property>
+    <description>
+      Maximum time to wait for an OOM situation to get resolved before
+      bringing down the node.
+    </description>
+    <name>yarn.nodemanager.elastic-memory-control.timeout-sec</name>
+    <value>5</value>
+  </property>
+  <property>
+    <description>
+      URI for NodeAttributeManager. The default value is
+      /tmp/hadoop-yarn-${user}/node-attribute/ in the local filesystem.
+    </description>
+    <name>yarn.node-attribute.fs-store.root-dir</name>
+    <value></value>
+  </property>
+
+  <property>
+    <description>
+      Choose different implementation of node attribute's storage
+    </description>
+    <name>yarn.node-attribute.fs-store.impl.class</name>
+    <value>org.apache.hadoop.yarn.server.resourcemanager.nodelabels.FileSystemNodeAttributeStore</value>
+  </property>
 </configuration>

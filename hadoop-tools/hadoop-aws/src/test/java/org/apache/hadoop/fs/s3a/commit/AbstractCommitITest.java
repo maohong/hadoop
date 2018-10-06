@@ -28,7 +28,7 @@ import org.junit.Assert;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -170,6 +170,25 @@ public abstract class AbstractCommitITest extends AbstractS3ATestBase {
           + client,
           client instanceof InconsistentAmazonS3Client);
       inconsistentClient = (InconsistentAmazonS3Client) client;
+    }
+  }
+
+  /**
+   * Create a random Job ID using the fork ID as part of the number.
+   * @return fork ID string in a format parseable by Jobs
+   * @throws Exception failure
+   */
+  protected String randomJobId() throws Exception {
+    String testUniqueForkId = System.getProperty(TEST_UNIQUE_FORK_ID, "0001");
+    int l = testUniqueForkId.length();
+    String trailingDigits = testUniqueForkId.substring(l - 4, l);
+    try {
+      int digitValue = Integer.valueOf(trailingDigits);
+      return String.format("20070712%04d_%04d",
+          (long)(Math.random() * 1000),
+          digitValue);
+    } catch (NumberFormatException e) {
+      throw new Exception("Failed to parse " + trailingDigits, e);
     }
   }
 

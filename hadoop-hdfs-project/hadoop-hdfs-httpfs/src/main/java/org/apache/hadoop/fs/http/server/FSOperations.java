@@ -34,7 +34,10 @@ import org.apache.hadoop.fs.http.client.HttpFSFileSystem;
 import org.apache.hadoop.fs.permission.AclEntry;
 import org.apache.hadoop.fs.permission.AclStatus;
 import org.apache.hadoop.fs.permission.FsPermission;
+import org.apache.hadoop.hdfs.DistributedFileSystem;
 import org.apache.hadoop.hdfs.protocol.BlockStoragePolicy;
+import org.apache.hadoop.hdfs.protocol.SnapshotDiffReport;
+import org.apache.hadoop.hdfs.web.JsonUtil;
 import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.lib.service.FileSystemAccess;
 import org.apache.hadoop.util.StringUtils;
@@ -119,6 +122,9 @@ public class FSOperations {
     }
     if (fileStatus.getPermission().getErasureCodedBit()) {
       json.put(HttpFSFileSystem.EC_BIT_JSON, true);
+    }
+    if (fileStatus.isSnapshotEnabled()) {
+      json.put(HttpFSFileSystem.SNAPSHOT_BIT_JSON, true);
     }
     return json;
   }
@@ -1473,6 +1479,78 @@ public class FSOperations {
   }
 
   /**
+   *  Executor that performs an allowSnapshot operation.
+   */
+  @InterfaceAudience.Private
+  public static class FSAllowSnapshot implements
+      FileSystemAccess.FileSystemExecutor<Void> {
+
+    private Path path;
+
+    /**
+     * Creates a allowSnapshot executor.
+     * @param path directory path to allow snapshot.
+     */
+    public FSAllowSnapshot(String path) {
+      this.path = new Path(path);
+    }
+
+    /**
+     * Executes the filesystem operation.
+     * @param fs filesystem instance to use.
+     * @throws IOException thrown if an IO error occurred.
+     */
+    @Override
+    public Void execute(FileSystem fs) throws IOException {
+      if (fs instanceof DistributedFileSystem) {
+        DistributedFileSystem dfs = (DistributedFileSystem) fs;
+        dfs.allowSnapshot(path);
+      } else {
+        throw new UnsupportedOperationException("allowSnapshot is not "
+            + "supported for HttpFs on " + fs.getClass()
+            + ". Please check your fs.defaultFS configuration");
+      }
+      return null;
+    }
+  }
+
+  /**
+   *  Executor that performs an disallowSnapshot operation.
+   */
+  @InterfaceAudience.Private
+  public static class FSDisallowSnapshot implements
+      FileSystemAccess.FileSystemExecutor<Void> {
+
+    private Path path;
+
+    /**
+     * Creates a disallowSnapshot executor.
+     * @param path directory path to allow snapshot.
+     */
+    public FSDisallowSnapshot(String path) {
+      this.path = new Path(path);
+    }
+
+    /**
+     * Executes the filesystem operation.
+     * @param fs filesystem instance to use.
+     * @throws IOException thrown if an IO error occurred.
+     */
+    @Override
+    public Void execute(FileSystem fs) throws IOException {
+      if (fs instanceof DistributedFileSystem) {
+        DistributedFileSystem dfs = (DistributedFileSystem) fs;
+        dfs.disallowSnapshot(path);
+      } else {
+        throw new UnsupportedOperationException("disallowSnapshot is not "
+            + "supported for HttpFs on " + fs.getClass()
+            + ". Please check your fs.defaultFS configuration");
+      }
+      return null;
+    }
+  }
+
+  /**
    *  Executor that performs a createSnapshot FileSystemAccess operation.
    */
   @InterfaceAudience.Private
@@ -1573,6 +1651,54 @@ public class FSOperations {
     public Void execute(FileSystem fs) throws IOException {
       fs.renameSnapshot(path, oldSnapshotName, snapshotName);
       return null;
+    }
+  }
+
+  /**
+   *  Executor that performs a getSnapshotDiff operation.
+   */
+  @InterfaceAudience.Private
+  public static class FSGetSnapshotDiff implements
+      FileSystemAccess.FileSystemExecutor<String> {
+    private Path path;
+    private String oldSnapshotName;
+    private String snapshotName;
+
+    /**
+     * Creates a getSnapshotDiff executor.
+     * @param path directory path of the snapshots to be examined.
+     * @param oldSnapshotName Older snapshot name.
+     * @param snapshotName Newer snapshot name.
+     */
+    public FSGetSnapshotDiff(String path, String oldSnapshotName,
+        String snapshotName) {
+      this.path = new Path(path);
+      this.oldSnapshotName = oldSnapshotName;
+      this.snapshotName = snapshotName;
+    }
+
+    /**
+     * Executes the filesystem operation.
+     * @param fs filesystem instance to use.
+     * @return A serialized JSON string of snapshot diffs.
+     * @throws IOException thrown if an IO error occurred.
+     */
+    @Override
+    public String execute(FileSystem fs) throws IOException {
+      SnapshotDiffReport sdr = null;
+      if (fs instanceof DistributedFileSystem) {
+        DistributedFileSystem dfs = (DistributedFileSystem) fs;
+        sdr = dfs.getSnapshotDiffReport(path, oldSnapshotName, snapshotName);
+      } else {
+        throw new UnsupportedOperationException("getSnapshotDiff is not "
+            + "supported for HttpFs on " + fs.getClass()
+            + ". Please check your fs.defaultFS configuration");
+      }
+      if (sdr != null) {
+        return JsonUtil.toJsonString(sdr);
+      } else {
+        return "";
+      }
     }
   }
 }

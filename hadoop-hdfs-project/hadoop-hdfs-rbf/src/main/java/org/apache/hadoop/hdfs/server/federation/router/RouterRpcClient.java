@@ -35,13 +35,16 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -67,7 +70,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 
 /**
- * A client proxy for Router -> NN communication using the NN ClientProtocol.
+ * A client proxy for Router to NN communication using the NN ClientProtocol.
  * <p>
  * Provides routers to invoke remote ClientProtocol methods and handle
  * retries/failover.
@@ -89,8 +92,8 @@ public class RouterRpcClient {
       LoggerFactory.getLogger(RouterRpcClient.class);
 
 
-  /** Router identifier. */
-  private final String routerId;
+  /** Router using this RPC client. */
+  private final Router router;
 
   /** Interface to identify the active NN for a nameservice or blockpool ID. */
   private final ActiveNamenodeResolver namenodeResolver;
@@ -98,7 +101,7 @@ public class RouterRpcClient {
   /** Connection pool to the Namenodes per user for performance. */
   private final ConnectionManager connectionManager;
   /** Service to run asynchronous calls. */
-  private final ExecutorService executorService;
+  private final ThreadPoolExecutor executorService;
   /** Retry policy for router -> NN communication. */
   private final RetryPolicy retryPolicy;
   /** Optional perf monitor. */
@@ -113,12 +116,13 @@ public class RouterRpcClient {
    * Create a router RPC client to manage remote procedure calls to NNs.
    *
    * @param conf Hdfs Configuation.
+   * @param router A router using this RPC client.
    * @param resolver A NN resolver to determine the currently active NN in HA.
    * @param monitor Optional performance monitor.
    */
-  public RouterRpcClient(Configuration conf, String identifier,
+  public RouterRpcClient(Configuration conf, Router router,
       ActiveNamenodeResolver resolver, RouterRpcMonitor monitor) {
-    this.routerId = identifier;
+    this.router = router;
 
     this.namenodeResolver = resolver;
 
@@ -131,8 +135,16 @@ public class RouterRpcClient {
     ThreadFactory threadFactory = new ThreadFactoryBuilder()
         .setNameFormat("RPC Router Client-%d")
         .build();
-    this.executorService = Executors.newFixedThreadPool(
-        numThreads, threadFactory);
+    BlockingQueue<Runnable> workQueue;
+    if (conf.getBoolean(
+        RBFConfigKeys.DFS_ROUTER_CLIENT_REJECT_OVERLOAD,
+        RBFConfigKeys.DFS_ROUTER_CLIENT_REJECT_OVERLOAD_DEFAULT)) {
+      workQueue = new ArrayBlockingQueue<>(numThreads);
+    } else {
+      workQueue = new LinkedBlockingQueue<>();
+    }
+    this.executorService = new ThreadPoolExecutor(numThreads, numThreads,
+        0L, TimeUnit.MILLISECONDS, workQueue, threadFactory);
 
     this.rpcMonitor = monitor;
 
@@ -332,7 +344,8 @@ public class RouterRpcClient {
 
     if (namenodes == null || namenodes.isEmpty()) {
       throw new IOException("No namenodes to invoke " + method.getName() +
-          " with params " + Arrays.toString(params) + " from " + this.routerId);
+          " with params " + Arrays.toString(params) + " from "
+          + router.getRouterId());
     }
 
     Object ret = null;
@@ -571,7 +584,7 @@ public class RouterRpcClient {
    * @param block Block used to determine appropriate nameservice.
    * @param method The remote method and parameters to invoke.
    * @return The result of invoking the method.
-   * @throws IOException
+   * @throws IOException If the invoke generated an error.
    */
   public Object invokeSingle(final ExtendedBlock block, RemoteMethod method)
       throws IOException {
@@ -589,7 +602,7 @@ public class RouterRpcClient {
    * @param bpId Block pool identifier.
    * @param method The remote method and parameters to invoke.
    * @return The result of invoking the method.
-   * @throws IOException
+   * @throws IOException If the invoke generated an error.
    */
   public Object invokeSingleBlockPool(final String bpId, RemoteMethod method)
       throws IOException {
@@ -606,7 +619,7 @@ public class RouterRpcClient {
    * @param nsId Target namespace for the method.
    * @param method The remote method and parameters to invoke.
    * @return The result of invoking the method.
-   * @throws IOException
+   * @throws IOException If the invoke generated an error.
    */
   public Object invokeSingle(final String nsId, RemoteMethod method)
       throws IOException {
@@ -626,6 +639,7 @@ public class RouterRpcClient {
    * Re-throws exceptions generated by the remote RPC call as either
    * RemoteException or IOException.
    *
+   * @param <T> The type of the remote method return.
    * @param nsId Target namespace for the method.
    * @param method The remote method and parameters to invoke.
    * @param clazz Class for the return type.
@@ -648,7 +662,7 @@ public class RouterRpcClient {
    * @param location RemoteLocation to invoke.
    * @param remoteMethod The remote method and parameters to invoke.
    * @return The result of invoking the method if successful.
-   * @throws IOException
+   * @throws IOException If the invoke generated an error.
    */
   public Object invokeSingle(final RemoteLocationContext location,
       RemoteMethod remoteMethod) throws IOException {
@@ -687,6 +701,7 @@ public class RouterRpcClient {
    * If no expected result class/values are specified, the success condition is
    * a call that does not throw a remote exception.
    *
+   * @param <T> The type of the remote method return.
    * @param locations List of locations/nameservices to call concurrently.
    * @param remoteMethod The remote method and parameters to invoke.
    * @param expectedResultClass In order to be considered a positive result, the
@@ -858,6 +873,8 @@ public class RouterRpcClient {
   /**
    * Invoke method in all locations and return success if any succeeds.
    *
+   * @param <T> The type of the remote location.
+   * @param <R> The type of the remote method return.
    * @param locations List of remote locations to call concurrently.
    * @param method The remote method and parameters to invoke.
    * @return If the call succeeds in any location.
@@ -886,6 +903,7 @@ public class RouterRpcClient {
    * RemoteException or IOException.
    *
    * @param <T> The type of the remote location.
+   * @param <R> The type of the remote method return.
    * @param locations List of remote locations to call concurrently.
    * @param method The remote method and parameters to invoke.
    * @throws IOException If all the calls throw an exception.
@@ -904,9 +922,10 @@ public class RouterRpcClient {
    * RemoteException or IOException.
    *
    * @param <T> The type of the remote location.
+   * @param <R> The type of the remote method return.
    * @param locations List of remote locations to call concurrently.
    * @param method The remote method and parameters to invoke.
-   * @return Result of invoking the method per subcluster: nsId -> result.
+   * @return Result of invoking the method per subcluster: nsId to result.
    * @throws IOException If all the calls throw an exception.
    */
   public <T extends RemoteLocationContext, R> Map<T, R> invokeConcurrent(
@@ -923,6 +942,7 @@ public class RouterRpcClient {
    * RemoteException or IOException.
    *
    * @param <T> The type of the remote location.
+   * @param <R> The type of the remote method return.
    * @param locations List of remote locations to call concurrently.
    * @param method The remote method and parameters to invoke.
    * @param requireResponse If true an exception will be thrown if all calls do
@@ -953,7 +973,7 @@ public class RouterRpcClient {
    *          successfully received are returned.
    * @param standby If the requests should go to the standby namenodes too.
    * @param clazz Type of the remote return type.
-   * @return Result of invoking the method per subcluster: nsId -> result.
+   * @return Result of invoking the method per subcluster: nsId to result.
    * @throws IOException If requiredResponse=true and any of the calls throw an
    *           exception.
    */
@@ -982,7 +1002,7 @@ public class RouterRpcClient {
    * @param standby If the requests should go to the standby namenodes too.
    * @param timeOutMs Timeout for each individual call.
    * @param clazz Type of the remote return type.
-   * @return Result of invoking the method per subcluster: nsId -> result.
+   * @return Result of invoking the method per subcluster: nsId to result.
    * @throws IOException If requiredResponse=true and any of the calls throw an
    *           exception.
    */
@@ -1106,6 +1126,16 @@ public class RouterRpcClient {
       }
 
       return results;
+    } catch (RejectedExecutionException e) {
+      if (rpcMonitor != null) {
+        rpcMonitor.proxyOpFailureClientOverloaded();
+      }
+      int active = executorService.getActiveCount();
+      int total = executorService.getMaximumPoolSize();
+      String msg = "Not enough client threads " + active + "/" + total;
+      LOG.error(msg);
+      throw new StandbyException(
+          "Router " + router.getRouterId() + " is overloaded: " + msg);
     } catch (InterruptedException ex) {
       LOG.error("Unexpected error while invoking API: {}", ex.getMessage());
       throw new IOException(
@@ -1129,7 +1159,7 @@ public class RouterRpcClient {
 
     if (namenodes == null || namenodes.isEmpty()) {
       throw new IOException("Cannot locate a registered namenode for " + nsId +
-          " from " + this.routerId);
+          " from " + router.getRouterId());
     }
     return namenodes;
   }
@@ -1150,7 +1180,7 @@ public class RouterRpcClient {
 
     if (namenodes == null || namenodes.isEmpty()) {
       throw new IOException("Cannot locate a registered namenode for " + bpId +
-          " from " + this.routerId);
+          " from " + router.getRouterId());
     }
     return namenodes;
   }

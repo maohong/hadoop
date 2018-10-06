@@ -20,10 +20,10 @@
   <parent>
     <groupId>org.apache.hadoop</groupId>
     <artifactId>hadoop-main</artifactId>
-    <version>3.2.0-SNAPSHOT</version>
+    <version>3.3.0-SNAPSHOT</version>
   </parent>
   <artifactId>hadoop-project</artifactId>
-  <version>3.2.0-SNAPSHOT</version>
+  <version>3.3.0-SNAPSHOT</version>
   <description>Apache Hadoop Project POM</description>
   <name>Apache Hadoop Project POM</name>
   <packaging>pom</packaging>
@@ -50,7 +50,7 @@
 
     <kafka.version>0.8.2.1</kafka.version>
 
-    <hadoop.assemblies.version>3.2.0-SNAPSHOT</hadoop.assemblies.version>
+    <hadoop.assemblies.version>3.3.0-SNAPSHOT</hadoop.assemblies.version>
     <commons-daemon.version>1.0.13</commons-daemon.version>
 
     <test.build.dir>${project.build.directory}/test-dir</test.build.dir>
@@ -69,7 +69,11 @@
 
     <!-- jackson versions -->
     <jackson.version>1.9.13</jackson.version>
-    <jackson2.version>2.9.4</jackson2.version>
+    <jackson2.version>2.9.5</jackson2.version>
+
+    <!-- httpcomponents versions -->
+    <httpclient.version>4.5.2</httpclient.version>
+    <httpcore.version>4.4.4</httpcore.version>
 
     <!-- SLF4J version -->
     <slf4j.version>1.7.25</slf4j.version>
@@ -82,7 +86,7 @@
     <protobuf.version>2.5.0</protobuf.version>
     <protoc.path>${env.HADOOP_PROTOC_PATH}</protoc.path>
 
-    <zookeeper.version>3.4.9</zookeeper.version>
+    <zookeeper.version>3.4.13</zookeeper.version>
     <curator.version>2.12.0</curator.version>
     <findbugs.version>3.0.0</findbugs.version>
     <spotbugs.version>3.1.0-RC1</spotbugs.version>
@@ -96,11 +100,19 @@
     <apacheds.version>2.0.0-M21</apacheds.version>
     <ldap-api.version>1.0.0-M33</ldap-api.version>
 
+    <!-- Apache Ratis version -->
+    <ratis.version>0.3.0-eca3531-SNAPSHOT</ratis.version>
     <jcache.version>1.0-alpha-1</jcache.version>
     <ehcache.version>3.3.1</ehcache.version>
     <hikari.version>2.4.12</hikari.version>
     <mssql.version>6.2.1.jre7</mssql.version>
     <okhttp.version>2.7.5</okhttp.version>
+
+    <!-- Maven protoc compiler -->
+    <protobuf-maven-plugin.version>0.5.1</protobuf-maven-plugin.version>
+    <protobuf-compile.version>3.5.0</protobuf-compile.version>
+    <grpc.version>1.10.0</grpc.version>
+    <os-maven-plugin.version>1.5.0.Final</os-maven-plugin.version>
 
     <!-- define the Java language version used by the compiler -->
     <javac.version>1.8</javac.version>
@@ -132,9 +144,8 @@
     <build-helper-maven-plugin.version>1.9</build-helper-maven-plugin.version>
     <exec-maven-plugin.version>1.3.1</exec-maven-plugin.version>
     <make-maven-plugin.version>1.0-beta-1</make-maven-plugin.version>
-    <native-maven-plugin.version>1.0-alpha-8</native-maven-plugin.version>
     <surefire.fork.timeout>900</surefire.fork.timeout>
-    <aws-java-sdk.version>1.11.271</aws-java-sdk.version>
+    <aws-java-sdk.version>1.11.375</aws-java-sdk.version>
     <hsqldb.version>2.3.4</hsqldb.version>
     <frontend-maven-plugin.version>1.5</frontend-maven-plugin.version>
     <!-- the version of Hadoop declared in the version resources; can be overridden
@@ -411,7 +422,7 @@
         <version>${hadoop.version}</version>
       </dependency>
 
-     <dependency>
+      <dependency>
         <groupId>org.apache.hadoop</groupId>
         <artifactId>hadoop-yarn-applications-distributedshell</artifactId>
         <version>${hadoop.version}</version>
@@ -440,6 +451,13 @@
         <groupId>org.apache.hadoop</groupId>
         <artifactId>hadoop-yarn-services-core</artifactId>
         <version>${hadoop.version}</version>
+      </dependency>
+
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-yarn-services-core</artifactId>
+        <version>${hadoop.version}</version>
+        <type>test-jar</type>
       </dependency>
 
       <dependency>
@@ -558,6 +576,132 @@
 
       <dependency>
         <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-ozone</artifactId>
+        <version>${hdds.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-ozone-objectstore-service</artifactId>
+        <version>${hdds.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-ozone-docs</artifactId>
+        <version>${hdds.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-ozone-filesystem</artifactId>
+        <version>${hdds.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-hdds-common</artifactId>
+        <version>${hdds.version}</version>
+      </dependency>
+
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-hdds-client</artifactId>
+        <version>${hdds.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-hdds-tools</artifactId>
+        <version>${hdds.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-ozone-tools</artifactId>
+        <version>${hdds.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-ozone-datanode</artifactId>
+        <version>${hdds.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-ozone-s3gateway</artifactId>
+        <version>${hdds.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-ozone-integration-test</artifactId>
+        <version>${hdds.version}</version>
+        <type>test-jar</type>
+      </dependency>
+
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-hdds-server-framework</artifactId>
+        <version>${hdds.version}</version>
+      </dependency>
+
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-hdds-server-scm</artifactId>
+        <version>${hdds.version}</version>
+      </dependency>
+
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-hdds-container-service</artifactId>
+        <version>${hdds.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-hdds-container-service</artifactId>
+        <version>${hdds.version}</version>
+        <type>test-jar</type>
+      </dependency>
+
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-hdds-server-scm</artifactId>
+        <type>test-jar</type>
+        <version>${hdds.version}</version>
+      </dependency>
+
+
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-ozone-common</artifactId>
+        <version>${hdds.version}</version>
+      </dependency>
+
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-ozone-ozone-manager</artifactId>
+        <version>${hdds.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-ozone-ozone-manager</artifactId>
+        <version>${hdds.version}</version>
+        <type>test-jar</type>
+      </dependency>
+
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-ozone-client</artifactId>
+        <version>${hdds.version}</version>
+      </dependency>
+
+      <dependency>
+        <groupId>org.openjdk.jmh</groupId>
+        <artifactId>jmh-core</artifactId>
+        <version>1.19</version>
+      </dependency>
+      <dependency>
+        <groupId>org.openjdk.jmh</groupId>
+        <artifactId>jmh-generator-annprocess</artifactId>
+        <version>1.19</version>
+      </dependency>
+
+
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
         <artifactId>hadoop-kms</artifactId>
         <version>${hadoop.version}</version>
       </dependency>
@@ -601,12 +745,12 @@
       <dependency>
         <groupId>org.apache.httpcomponents</groupId>
         <artifactId>httpclient</artifactId>
-        <version>4.5.2</version>
+        <version>${httpclient.version}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.httpcomponents</groupId>
         <artifactId>httpcore</artifactId>
-        <version>4.4.4</version>
+        <version>${httpcore.version}</version>
       </dependency>
       <dependency>
         <groupId>commons-codec</groupId>
@@ -767,6 +911,37 @@
       </dependency>
 
       <dependency>
+        <groupId>org.apache.ratis</groupId>
+        <artifactId>ratis-proto-shaded</artifactId>
+        <version>${ratis.version}</version>
+      </dependency>
+      <dependency>
+        <artifactId>ratis-common</artifactId>
+        <groupId>org.apache.ratis</groupId>
+        <version>${ratis.version}</version>
+      </dependency>
+      <dependency>
+        <artifactId>ratis-client</artifactId>
+        <groupId>org.apache.ratis</groupId>
+        <version>${ratis.version}</version>
+      </dependency>
+      <dependency>
+        <artifactId>ratis-server</artifactId>
+        <groupId>org.apache.ratis</groupId>
+        <version>${ratis.version}</version>
+      </dependency>
+      <dependency>
+        <artifactId>ratis-netty</artifactId>
+        <groupId>org.apache.ratis</groupId>
+        <version>${ratis.version}</version>
+      </dependency>
+      <dependency>
+        <artifactId>ratis-grpc</artifactId>
+        <groupId>org.apache.ratis</groupId>
+        <version>${ratis.version}</version>
+      </dependency>
+
+      <dependency>
         <groupId>io.netty</groupId>
         <artifactId>netty</artifactId>
         <version>3.10.5.Final</version>
@@ -882,11 +1057,6 @@
         <version>4.11</version>
       </dependency>
       <dependency>
-        <groupId>commons-lang</groupId>
-        <artifactId>commons-lang</artifactId>
-        <version>2.6</version>
-      </dependency>
-      <dependency>
         <groupId>commons-collections</groupId>
         <artifactId>commons-collections</artifactId>
         <version>3.2.2</version>
@@ -911,6 +1081,11 @@
         <groupId>org.apache.commons</groupId>
         <artifactId>commons-lang3</artifactId>
         <version>3.7</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.commons</groupId>
+        <artifactId>commons-text</artifactId>
+        <version>1.4</version>
       </dependency>
       <dependency>
         <groupId>org.slf4j</groupId>
@@ -993,6 +1168,11 @@
         <version>1.8.5</version>
       </dependency>
       <dependency>
+        <groupId>org.objenesis</groupId>
+        <artifactId>objenesis</artifactId>
+        <version>1.0</version>
+      </dependency>
+      <dependency>
         <groupId>org.mock-server</groupId>
         <artifactId>mockserver-netty</artifactId>
         <version>3.9.2</version>
@@ -1037,6 +1217,11 @@
         <groupId>com.jcraft</groupId>
         <artifactId>jsch</artifactId>
         <version>0.1.54</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.htrace</groupId>
+        <artifactId>htrace-core</artifactId>
+        <version>3.1.0-incubating</version>
       </dependency>
       <dependency>
         <groupId>org.apache.htrace</groupId>
@@ -1170,13 +1355,26 @@
       <dependency>
         <groupId>com.microsoft.azure</groupId>
         <artifactId>azure-storage</artifactId>
-        <version>5.4.0</version>
+        <version>7.0.0</version>
      </dependency>
+
+      <!--Wildfly openssl dependency is introduced by HADOOP-15669-->
+      <dependency>
+        <groupId>org.wildfly.openssl</groupId>
+        <artifactId>wildfly-openssl</artifactId>
+        <version>1.0.4.Final</version>
+      </dependency>
+
+      <dependency>
+        <groupId>org.threadly</groupId>
+        <artifactId>threadly</artifactId>
+        <version>4.9.0</version>
+      </dependency>
 
       <dependency>
         <groupId>com.aliyun.oss</groupId>
         <artifactId>aliyun-sdk-oss</artifactId>
-        <version>2.8.3</version>
+        <version>3.0.0</version>
         <exclusions>
           <exclusion>
             <groupId>org.apache.httpcomponents</groupId>
@@ -1457,7 +1655,9 @@
           <artifactId>maven-javadoc-plugin</artifactId>
           <version>${maven-javadoc-plugin.version}</version>
           <configuration>
-            <additionalparam>-Xmaxwarns 10000</additionalparam>
+            <additionalOptions>
+                <additionalOption>-Xmaxwarns 10000</additionalOption>
+            </additionalOptions>
           </configuration>
         </plugin>
         <plugin>
@@ -1476,11 +1676,6 @@
               <version>${spotbugs.version}</version>
             </dependency>
           </dependencies>
-        </plugin>
-        <plugin>
-          <groupId>org.codehaus.mojo</groupId>
-          <artifactId>native-maven-plugin</artifactId>
-          <version>${native-maven-plugin.version}</version>
         </plugin>
         <plugin>
           <groupId>org.codehaus.mojo</groupId>
@@ -1591,8 +1786,8 @@
           </ignores>
         </configuration>
       </plugin>
-       <plugin>
-         <groupId>org.apache.maven.plugins</groupId>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-antrun-plugin</artifactId>
         <executions>
           <execution>
@@ -1894,13 +2089,29 @@
         </dependencies>
       </dependencyManagement>
     </profile>
+    <profile>
+      <id>native</id>
+      <activation>
+        <activeByDefault>false</activeByDefault>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-compiler-plugin</artifactId>
+            <configuration>
+              <!-- add flags to generate native headers -->
+              <compilerArgs combine.children="append">
+                <arg>-h</arg>
+                <arg>${project.build.directory}/native/javah/</arg>
+              </compilerArgs>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
   </profiles>
 
   <repositories>
-    <repository>
-      <id>dynamodb-local-oregon</id>
-      <name>DynamoDB Local Release Repository</name>
-      <url>https://s3-us-west-2.amazonaws.com/dynamodb-local/release</url>
-    </repository>
   </repositories>
 </project>

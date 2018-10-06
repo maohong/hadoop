@@ -67,8 +67,8 @@ import java.util.concurrent.TimeoutException;
 import com.google.common.base.Supplier;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.Multimap;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.conf.Configuration;
@@ -141,7 +141,8 @@ import com.google.common.collect.Sets;
 public class MiniDFSCluster implements AutoCloseable {
 
   private static final String NAMESERVICE_ID_PREFIX = "nameserviceId";
-  private static final Log LOG = LogFactory.getLog(MiniDFSCluster.class);
+  private static final Logger LOG =
+      LoggerFactory.getLogger(MiniDFSCluster.class);
   /** System property to set the data dir: {@value} */
   public static final String PROP_TEST_BUILD_DATA =
       GenericTestUtils.SYSPROP_TEST_DATA_DIR;
@@ -202,8 +203,28 @@ public class MiniDFSCluster implements AutoCloseable {
       this.conf = conf;
       this.storagesPerDatanode =
           FsDatasetTestUtils.Factory.getFactory(conf).getDefaultNumOfDataDirs();
+      if (null == conf.get(HDFS_MINIDFS_BASEDIR)) {
+        conf.set(HDFS_MINIDFS_BASEDIR,
+            new File(getBaseDirectory()).getAbsolutePath());
+      }
     }
-    
+
+    public Builder(Configuration conf, File basedir) {
+      this.conf = conf;
+      this.storagesPerDatanode =
+          FsDatasetTestUtils.Factory.getFactory(conf).getDefaultNumOfDataDirs();
+      if (null == basedir) {
+        throw new IllegalArgumentException(
+            "MiniDFSCluster base directory cannot be null");
+      }
+      String cdir = conf.get(HDFS_MINIDFS_BASEDIR);
+      if (cdir != null) {
+        throw new IllegalArgumentException(
+            "MiniDFSCluster base directory already defined (" + cdir + ")");
+      }
+      conf.set(HDFS_MINIDFS_BASEDIR, basedir.getAbsolutePath());
+    }
+
     /**
      * Default: 0
      */
@@ -539,6 +560,11 @@ public class MiniDFSCluster implements AutoCloseable {
     public void setDnArgs(String ... args) {
       dnArgs = args;
     }
+
+    public DataNode getDatanode() {
+      return datanode;
+    }
+
   }
 
   private Configuration conf;
@@ -1167,7 +1193,7 @@ public class MiniDFSCluster implements AutoCloseable {
   }
 
 
-  private void initNameNodeConf(Configuration conf, String nameserviceId, int nsIndex, String nnId,
+  protected void initNameNodeConf(Configuration conf, String nameserviceId, int nsIndex, String nnId,
       boolean manageNameDfsDirs, boolean enableManagedDfsDirsRedundancy, int nnIndex)
       throws IOException {
     if (nameserviceId != null) {
@@ -1359,6 +1385,17 @@ public class MiniDFSCluster implements AutoCloseable {
     return null;
   }
 
+  public List<Integer> getNNIndexes(String nameserviceId) {
+    int count = 0;
+    List<Integer> nnIndexes = new ArrayList<>();
+    for (NameNodeInfo nn : namenodes.values()) {
+      if (nn.getNameserviceId().equals(nameserviceId)) {
+        nnIndexes.add(count);
+      }
+      count++;
+    }
+    return nnIndexes;
+  }
 
   /**
    * wait for the given namenode to get out of safemode.
@@ -1973,7 +2010,7 @@ public class MiniDFSCluster implements AutoCloseable {
     LOG.info("Shutting down the Mini HDFS Cluster");
     if (checkExitOnShutdown)  {
       if (ExitUtil.terminateCalled()) {
-        LOG.fatal("Test resulted in an unexpected exit",
+        LOG.error("Test resulted in an unexpected exit",
             ExitUtil.getFirstExitException());
         ExitUtil.resetFirstExitException();
         throw new AssertionError("Test resulted in an unexpected exit");
@@ -2904,7 +2941,8 @@ public class MiniDFSCluster implements AutoCloseable {
    * @return Storage directory
    */
   public File getStorageDir(int dnIndex, int dirIndex) {
-    return new File(getBaseDirectory(), getStorageDirPath(dnIndex, dirIndex));
+    return new File(determineDfsBaseDir(),
+        getStorageDirPath(dnIndex, dirIndex));
   }
 
   /**

@@ -37,6 +37,7 @@ import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.hdfs.DFSUtilClient;
 import org.apache.hadoop.hdfs.protocol.BlockStoragePolicy;
 import org.apache.hadoop.hdfs.protocol.DatanodeInfo;
+import org.apache.hadoop.hdfs.protocol.ErasureCodingPolicy;
 import org.apache.hadoop.hdfs.protocol.SnapshotDiffReport;
 import org.apache.hadoop.hdfs.protocol.SnapshottableDirectoryStatus;
 import org.apache.hadoop.hdfs.protocol.DatanodeInfo.DatanodeInfoBuilder;
@@ -48,6 +49,7 @@ import org.apache.hadoop.hdfs.protocol.LocatedBlock;
 import org.apache.hadoop.hdfs.protocol.LocatedBlocks;
 import org.apache.hadoop.hdfs.security.token.block.BlockTokenIdentifier;
 import org.apache.hadoop.hdfs.security.token.delegation.DelegationTokenIdentifier;
+import org.apache.hadoop.io.erasurecode.ECSchema;
 import org.apache.hadoop.ipc.RemoteException;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.security.token.TokenIdentifier;
@@ -66,7 +68,10 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 
-class JsonUtilClient {
+/**
+ * Utility methods used in WebHDFS/HttpFS JSON conversion.
+ */
+public class JsonUtilClient {
   static final DatanodeInfo[] EMPTY_DATANODE_INFO_ARRAY = {};
   static final String UNSUPPPORTED_EXCEPTION_STR =
       UnsupportedOperationException.class.getName();
@@ -131,6 +136,7 @@ class JsonUtilClient {
     Boolean aclBit = (Boolean) m.get("aclBit");
     Boolean encBit = (Boolean) m.get("encBit");
     Boolean erasureBit  = (Boolean) m.get("ecBit");
+    Boolean snapshotEnabledBit  = (Boolean) m.get("snapshotEnabled");
     EnumSet<HdfsFileStatus.Flags> f =
         EnumSet.noneOf(HdfsFileStatus.Flags.class);
     if (aclBit != null && aclBit) {
@@ -141,6 +147,22 @@ class JsonUtilClient {
     }
     if (erasureBit != null && erasureBit) {
       f.add(HdfsFileStatus.Flags.HAS_EC);
+    }
+    if (snapshotEnabledBit != null && snapshotEnabledBit) {
+      f.add(HdfsFileStatus.Flags.SNAPSHOT_ENABLED);
+    }
+
+    Map<String, Object> ecPolicyObj = (Map) m.get("ecPolicyObj");
+    ErasureCodingPolicy ecPolicy = null;
+    if (ecPolicyObj != null) {
+      Map<String, String> extraOptions = (Map) ecPolicyObj.get("extraOptions");
+      ECSchema ecSchema = new ECSchema((String) ecPolicyObj.get("codecName"),
+          (int) ecPolicyObj.get("numDataUnits"),
+          (int) ecPolicyObj.get("numParityUnits"), extraOptions);
+      ecPolicy = new ErasureCodingPolicy((String) ecPolicyObj.get("name"),
+          ecSchema, (int) ecPolicyObj.get("cellSize"),
+          (byte) (int) ecPolicyObj.get("id"));
+
     }
 
     final long aTime = ((Number) m.get("accessTime")).longValue();
@@ -170,6 +192,7 @@ class JsonUtilClient {
       .fileId(fileId)
       .children(childrenNum)
       .storagePolicy(storagePolicy)
+      .ecPolicy(ecPolicy)
       .build();
   }
 

@@ -162,7 +162,7 @@ Configuration
 | Property | Description |
 |:---- |:---- |
 | `yarn.scheduler.capacity.queue-mappings` | This configuration specifies the mapping of user or group to a specific queue. You can map a single user or a list of users to queues. Syntax: `[u or g]:[name]:[queue_name][,next_mapping]*`. Here, *u or g* indicates whether the mapping is for a user or group. The value is *u* for user and *g* for group. *name* indicates the user name or group name. To specify the user who has submitted the application, %user can be used. *queue_name* indicates the queue name for which the application has to be mapped. To specify queue name same as user name, *%user* can be used. To specify queue name same as the name of the primary group for which the user belongs to, *%primary_group* can be used.|
-| `yarn.scheduler.queue-placement-rules.app-name` | This configuration specifies the mapping of application_id to a specific queue. You can map a single application or a list of applications to queues. Syntax: `[app_id]:[queue_name][,next_mapping]*`. Here, *app_id* indicates the application id you want to do the mapping. To specify the current application's id as the app_id, %application can be used. *queue_name* indicates the queue name for which the application has to be mapped. To specify queue name same as application id, *%application* can be used.|
+| `yarn.scheduler.queue-placement-rules.app-name` | This configuration specifies the mapping of application_name to a specific queue. You can map a single application or a list of applications to queues. Syntax: `[app_name]:[queue_name][,next_mapping]*`. Here, *app_name* indicates the application name you want to do the mapping. *queue_name* indicates the queue name for which the application has to be mapped. To specify the current application's name as the app_name, %application can be used.|
 | `yarn.scheduler.capacity.queue-mappings-override.enable` | This function is used to specify whether the user specified queues can be overridden. This is a Boolean value and the default value is *false*. |
 
 Example:
@@ -181,9 +181,9 @@ Example:
 
   <property>
     <name>yarn.scheduler.queue-placement-rules.app-name</name>
-    <value>appId1:queue1,%application:%application</value>
+    <value>appName1:queue1,%application:%application</value>
     <description>
-      Here, <appId1> is mapped to <queue1>, maps applications to queues with
+      Here, <appName1> is mapped to <queue1>, maps applications to queues with
       the same name as application respectively. The mappings will be
       evaluated from left to right, and the first valid mapping will be used.
     </description>
@@ -332,7 +332,7 @@ support other pre-configured queues to co-exist along with auto-created queues. 
 The parent queue which has been enabled for auto leaf queue creation,supports
  the configuration of template parameters for automatic configuration of the auto-created leaf queues. The auto-created queues support all of the
  leaf queue configuration parameters except for **Queue ACL**, **Absolute
- Resource** configurations and **Node Labels**. Queue ACLs and Node Labels are
+ Resource** configurations. Queue ACLs are
  currently inherited from the parent queue i.e they are not configurable on the leaf queue template
 
 | Property | Description |
@@ -363,6 +363,22 @@ Example:
     <name>yarn.scheduler.capacity.root.parent1.leaf-queue-template.ordering-policy</name>
     <value>fair</value>
  </property>
+ <property>
+    <name>yarn.scheduler.capacity.root.parent1.GPU.capacity</name>
+    <value>50</value>
+ </property>
+ <property>
+     <name>yarn.scheduler.capacity.root.parent1.accessible-node-labels</name>
+     <value>GPU,SSD</value>
+   </property>
+ <property>
+     <name>yarn.scheduler.capacity.root.parent1.leaf-queue-template.accessible-node-labels</name>
+     <value>GPU</value>
+  </property>
+ <property>
+    <name>yarn.scheduler.capacity.root.parent1.leaf-queue-template.accessible-node-labels.GPU.capacity</name>
+    <value>5</value>
+ </property>
 ```
 
 * Scheduling Edit Policy configuration for auto-created queue management
@@ -384,9 +400,14 @@ list of current scheduling edit policies as a comma separated string in `yarn.re
 
   * Data Locality
 
+Capacity Scheduler leverages `Delay Scheduling` to honor task locality constraints. There are 3 levels of locality constraint: node-local, rack-local and off-switch. The scheduler counts the number of missed opportunities when the locality cannot be satisfied, and waits this count to reach a threshold before relaxing the locality constraint to next level. The threshold can be configured in following properties:
+
 | Property | Description |
 |:---- |:---- |
 | `yarn.scheduler.capacity.node-locality-delay` | Number of missed scheduling opportunities after which the CapacityScheduler attempts to schedule rack-local containers. Typically, this should be set to number of nodes in the cluster. By default is setting approximately number of nodes in one rack which is 40. Positive integer value is expected. |
+| `yarn.scheduler.capacity.rack-locality-additional-delay` |  Number of additional missed scheduling opportunities over the node-locality-delay ones, after which the CapacityScheduler attempts to schedule off-switch containers. By default this value is set to -1, in this case, the number of missed opportunities for assigning off-switch containers is calculated based on the formula `L * C / N`, where `L` is number of locations (nodes or racks) specified in the resource request, `C` is the number of requested containers, and `N` is the size of the cluster. |
+
+Note, this feature should be disabled if YARN is deployed separately with the file system, as locality is meaningless. This can be done by setting `yarn.scheduler.capacity.node-locality-delay` to `-1`, in this case, request's locality constraint is ignored.
 
   * Container Allocation per NodeManager Heartbeat
 

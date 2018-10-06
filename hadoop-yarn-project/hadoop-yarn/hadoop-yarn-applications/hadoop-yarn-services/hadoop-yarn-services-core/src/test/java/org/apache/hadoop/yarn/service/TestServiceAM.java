@@ -18,6 +18,7 @@
 
 package org.apache.hadoop.yarn.service;
 
+import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableMap;
 import org.apache.commons.io.FileUtils;
 import org.apache.curator.test.TestingCluster;
@@ -34,6 +35,7 @@ import org.apache.hadoop.yarn.client.api.AMRMClient;
 import org.apache.hadoop.yarn.client.api.async.AMRMClientAsync;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.security.DockerCredentialTokenIdentifier;
+import org.apache.hadoop.yarn.service.api.records.Artifact;
 import org.apache.hadoop.yarn.service.api.records.Component;
 import org.apache.hadoop.yarn.service.api.records.ResourceInformation;
 import org.apache.hadoop.yarn.service.api.records.Service;
@@ -108,6 +110,7 @@ public class TestServiceAM extends ServiceTestUtils{
     ApplicationId applicationId = ApplicationId.newInstance(123456, 1);
     Service exampleApp = new Service();
     exampleApp.setId(applicationId.toString());
+    exampleApp.setVersion("v1");
     exampleApp.setName("testContainerCompleted");
     exampleApp.addComponent(createComponent("compa", 1, "pwd"));
 
@@ -146,6 +149,7 @@ public class TestServiceAM extends ServiceTestUtils{
         System.currentTimeMillis(), 1);
     Service exampleApp = new Service();
     exampleApp.setId(applicationId.toString());
+    exampleApp.setVersion("v1");
     exampleApp.setName("testContainersRecovers");
     String comp1Name = "comp1";
     String comp1InstName = "comp1-0";
@@ -189,6 +193,7 @@ public class TestServiceAM extends ServiceTestUtils{
     Service exampleApp = new Service();
     exampleApp.setId(applicationId.toString());
     exampleApp.setName("testContainersRecovers");
+    exampleApp.setVersion("v1");
     String comp1Name = "comp1";
     String comp1InstName = "comp1-0";
 
@@ -230,6 +235,7 @@ public class TestServiceAM extends ServiceTestUtils{
     Service exampleApp = new Service();
     exampleApp.setId(applicationId.toString());
     exampleApp.setName("testContainersFromDifferentApp");
+    exampleApp.setVersion("v1");
     String comp1Name = "comp1";
     String comp1InstName = "comp1-0";
 
@@ -270,6 +276,7 @@ public class TestServiceAM extends ServiceTestUtils{
     Service exampleApp = new Service();
     exampleApp.setId(applicationId.toString());
     exampleApp.setName("testScheduleWithMultipleResourceTypes");
+    exampleApp.setVersion("v1");
 
     List<ResourceTypeInfo> resourceTypeInfos = new ArrayList<>(
         ResourceUtils.getResourcesTypeInfo());
@@ -342,6 +349,81 @@ public class TestServiceAM extends ServiceTestUtils{
           tk.getKind().equals(DockerCredentialTokenIdentifier.KIND));
     }
 
+    am.stop();
+  }
+
+  @Test
+  public void testIPChange() throws TimeoutException,
+      InterruptedException {
+    ApplicationId applicationId = ApplicationId.newInstance(123456, 1);
+    String comp1Name = "comp1";
+    String comp1InstName = "comp1-0";
+    Service exampleApp = new Service();
+    exampleApp.setId(applicationId.toString());
+    exampleApp.setVersion("v1");
+    exampleApp.setName("testIPChange");
+    Component comp1 = createComponent(comp1Name, 1, "sleep 60");
+    comp1.setArtifact(new Artifact().type(Artifact.TypeEnum.DOCKER));
+    exampleApp.addComponent(comp1);
+
+    MockServiceAM am = new MockServiceAM(exampleApp);
+    am.init(conf);
+    am.start();
+
+    ComponentInstance comp1inst0 = am.getCompInstance(comp1Name, comp1InstName);
+    // allocate a container
+    am.feedContainerToComp(exampleApp, 1, comp1Name);
+    GenericTestUtils.waitFor(() -> comp1inst0.getContainerStatus() != null,
+        2000, 200000);
+    // first host status will match the container nodeId
+    Assert.assertEquals("localhost",
+        comp1inst0.getContainerStatus().getHost());
+
+    LOG.info("Change the IP and host");
+    // change the container status
+    am.updateContainerStatus(exampleApp, 1, comp1Name, "new.host");
+    GenericTestUtils.waitFor(() -> comp1inst0.getContainerStatus().getHost()
+        .equals("new.host"), 2000, 200000);
+
+    LOG.info("Change the IP and host again");
+    // change the container status
+    am.updateContainerStatus(exampleApp, 1, comp1Name, "newer.host");
+    GenericTestUtils.waitFor(() -> comp1inst0.getContainerStatus().getHost()
+        .equals("newer.host"), 2000, 200000);
+    am.stop();
+  }
+
+  // Test to verify that the containers are released and the
+  // component instance is added to the pending queue when building the launch
+  // context fails.
+  @Test(timeout = 9990000)
+  public void testContainersReleasedWhenPreLaunchFails()
+      throws Exception {
+    ApplicationId applicationId = ApplicationId.newInstance(
+        System.currentTimeMillis(), 1);
+    Service exampleApp = new Service();
+    exampleApp.setId(applicationId.toString());
+    exampleApp.setVersion("v1");
+    exampleApp.setName("testContainersReleasedWhenPreLaunchFails");
+
+    Component compA = createComponent("compa", 1, "pwd");
+    Artifact artifact = new Artifact();
+    artifact.setType(Artifact.TypeEnum.TARBALL);
+    compA.artifact(artifact);
+    exampleApp.addComponent(compA);
+
+    MockServiceAM am = new MockServiceAM(exampleApp);
+    am.init(conf);
+    am.start();
+
+    ContainerId containerId = am.createContainerId(1);
+
+    // allocate a container
+    am.feedContainerToComp(exampleApp, containerId, "compa");
+    am.waitForContainerToRelease(containerId);
+
+    Assert.assertEquals(1,
+        am.getComponent("compa").getPendingInstances().size());
     am.stop();
   }
 }

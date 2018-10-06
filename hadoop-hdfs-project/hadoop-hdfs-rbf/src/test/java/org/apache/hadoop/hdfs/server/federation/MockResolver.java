@@ -27,6 +27,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.server.federation.resolver.ActiveNamenodeResolver;
@@ -128,6 +129,9 @@ public class MockResolver
     // Return a copy of the list because it is updated periodically
     List<? extends FederationNamenodeContext> namenodes =
         this.resolver.get(nameserviceId);
+    if (namenodes == null) {
+      namenodes = new ArrayList<>();
+    }
     return Collections.unmodifiableList(new ArrayList<>(namenodes));
   }
 
@@ -260,6 +264,11 @@ public class MockResolver
   @Override
   public Set<FederationNamespaceInfo> getNamespaces() throws IOException {
     return this.namespaces;
+  }
+
+  @Override
+  public Set<String> getDisabledNamespaces() throws IOException {
+    return new TreeSet<>();
   }
 
   @Override

@@ -36,7 +36,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock.ReadLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock.WriteLock;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience.Private;
@@ -45,6 +45,7 @@ import org.apache.hadoop.ipc.CallerContext;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.util.StringInterner;
+import org.apache.hadoop.yarn.api.records.ApplicationAccessType;
 import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.ApplicationReport;
@@ -64,6 +65,7 @@ import org.apache.hadoop.yarn.api.records.ReservationId;
 import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.api.records.ResourceRequest;
 import org.apache.hadoop.yarn.api.records.YarnApplicationState;
+import org.apache.hadoop.yarn.client.api.AppAdminClient;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.event.Dispatcher;
 import org.apache.hadoop.yarn.event.EventHandler;
@@ -901,7 +903,6 @@ public class RMAppImpl implements RMApp, Recoverable {
 
   @Override
   public void handle(RMAppEvent event) {
-
     this.writeLock.lock();
 
     try {
@@ -1457,8 +1458,7 @@ public class RMAppImpl implements RMApp, Recoverable {
     }
   }
 
-  private static final class AppRejectedTransition extends
-      FinalTransition{
+  private static final class AppRejectedTransition extends FinalTransition {
     public AppRejectedTransition() {
       super(RMAppState.FAILED);
     }
@@ -1469,41 +1469,81 @@ public class RMAppImpl implements RMApp, Recoverable {
     };
   }
 
+  /**
+   * Attempt to perform a type-specific cleanup after application has completed.
+   *
+   * @param app application to clean up
+   */
+  static void appAdminClientCleanUp(RMAppImpl app) {
+    try {
+      AppAdminClient client = AppAdminClient.createAppAdminClient(app
+          .applicationType, app.conf);
+      int result = client.actionCleanUp(app.name, app.user);
+      if (result == 0) {
+        LOG.info("Type-specific cleanup of application " + app.applicationId
+            + " of type " + app.applicationType + " succeeded");
+      } else {
+        LOG.warn("Type-specific cleanup of application " + app.applicationId
+            + " of type " + app.applicationType + " did not succeed with exit"
+            + " code " + result);
+      }
+    } catch (IllegalArgumentException e) {
+      // no AppAdminClient class has been specified for the application type,
+      // so this does not need to be logged
+    } catch (Exception e) {
+      LOG.warn("Could not run type-specific cleanup on application " +
+          app.applicationId + " of type " + app.applicationType, e);
+    }
+  }
+
   private static class FinalTransition extends RMAppTransition {
 
     private final RMAppState finalState;
 
-    public FinalTransition(RMAppState finalState) {
+    FinalTransition(RMAppState finalState) {
       this.finalState = finalState;
     }
 
+    @Override
     public void transition(RMAppImpl app, RMAppEvent event) {
-      app.logAggregationStartTime = System.currentTimeMillis();
+      completeAndCleanupApp(app);
+      handleAppFinished(app);
+      app.clearUnusedFields();
+      appAdminClientCleanUp(app);
+    }
+
+    private void completeAndCleanupApp(RMAppImpl app) {
+      //cleanup app in RM Nodes
       for (NodeId nodeId : app.getRanNodes()) {
         app.handler.handle(
-            new RMNodeCleanAppEvent(nodeId, app.applicationId));
-      }
-      app.finishTime = app.storedFinishTime;
-      if (app.finishTime == 0 ) {
-        app.finishTime = app.systemClock.getTime();
+                new RMNodeCleanAppEvent(nodeId, app.applicationId));
       }
       // Recovered apps that are completed were not added to scheduler, so no
       // need to remove them from scheduler.
       if (app.recoveredFinalState == null) {
         app.handler.handle(new AppRemovedSchedulerEvent(app.applicationId,
-          finalState));
+            finalState));
       }
-      app.handler.handle(
-          new RMAppManagerEvent(app.applicationId,
-          RMAppManagerEventType.APP_COMPLETED));
 
+      // Send app completed event to AppManager
+      app.handler.handle(new RMAppManagerEvent(app.applicationId,
+              RMAppManagerEventType.APP_COMPLETED));
+    }
+
+    private void handleAppFinished(RMAppImpl app) {
+      app.logAggregationStartTime = app.systemClock.getTime();
+      // record finish time
+      app.finishTime = app.storedFinishTime;
+      if (app.finishTime == 0) {
+        app.finishTime = app.systemClock.getTime();
+      }
+
+      //record finish in history and metrics
       app.rmContext.getRMApplicationHistoryWriter()
           .applicationFinished(app, finalState);
       app.rmContext.getSystemMetricsPublisher()
           .appFinished(app, finalState, app.finishTime);
-      // set the memory free
-      app.clearUnusedFields();
-    };
+    }
   }
 
   public int getNumFailedAppAttempts() {
@@ -1519,7 +1559,7 @@ public class RMAppImpl implements RMApp, Recoverable {
   }
 
   private static final class AttemptFailedTransition implements
-      MultipleArcTransition<RMAppImpl, RMAppEvent, RMAppState> {
+        MultipleArcTransition<RMAppImpl, RMAppEvent, RMAppState> {
 
     private final RMAppState initialState;
 
@@ -1736,7 +1776,7 @@ public class RMAppImpl implements RMApp, Recoverable {
     try {
       this.readLock.lock();
       if (!isLogAggregationFinished() && isAppInFinalState(this) &&
-          System.currentTimeMillis() > this.logAggregationStartTime
+          systemClock.getTime() > this.logAggregationStartTime
           + this.logAggregationStatusTimeout) {
         for (Entry<NodeId, LogAggregationReport> output :
             logAggregationStatus.entrySet()) {
@@ -1781,8 +1821,8 @@ public class RMAppImpl implements RMApp, Recoverable {
                 == LogAggregationStatus.TIME_OUT
                 && report.getLogAggregationStatus()
                     == LogAggregationStatus.RUNNING) {
-            // If the log aggregation status got from latest nm heartbeat
-            // is Running, and current log aggregation status is TimeOut,
+            // If the log aggregation status got from latest NM heartbeat
+            // is RUNNING, and current log aggregation status is TIME_OUT,
             // based on whether there are any failure messages for this NM,
             // we will reset the log aggregation status as RUNNING or
             // RUNNING_WITH_FAILURE
@@ -1881,7 +1921,13 @@ public class RMAppImpl implements RMApp, Recoverable {
     }
   }
 
-  private boolean isLogAggregationFinished() {
+  @Override
+  public boolean isLogAggregationEnabled() {
+    return logAggregationEnabled;
+  }
+
+  @Override
+  public boolean isLogAggregationFinished() {
     return this.logAggregationStatusForAppReport
       .equals(LogAggregationStatus.SUCCEEDED)
         || this.logAggregationStatusForAppReport
@@ -2020,6 +2066,10 @@ public class RMAppImpl implements RMApp, Recoverable {
   private void sendATSCreateEvent() {
     rmContext.getRMApplicationHistoryWriter().applicationStarted(this);
     rmContext.getSystemMetricsPublisher().appCreated(this, this.startTime);
+    String appViewACLs = submissionContext.getAMContainerSpec()
+        .getApplicationACLs().get(ApplicationAccessType.VIEW_APP);
+    rmContext.getSystemMetricsPublisher().appACLsUpdated(
+        this, appViewACLs, systemClock.getTime());
   }
 
   @Private
@@ -2096,4 +2146,10 @@ public class RMAppImpl implements RMApp, Recoverable {
               RMAppState state){
       /* TODO fail the application on the failed transition */
   }
+
+  @VisibleForTesting
+  public long getLogAggregationStartTime() {
+    return logAggregationStartTime;
+  }
+
 }

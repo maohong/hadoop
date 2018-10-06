@@ -29,6 +29,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.net.SocketFactory;
 
+import com.google.common.annotations.VisibleForTesting;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.conf.Configuration;
@@ -149,6 +150,15 @@ public class ConnectionPool {
   }
 
   /**
+   * Get the clientIndex used to calculate index for lookup.
+   * @return Client index.
+   */
+  @VisibleForTesting
+  public AtomicInteger getClientIndex() {
+    return this.clientIndex;
+  }
+
+  /**
    * Return the next connection round-robin.
    *
    * @return Connection context.
@@ -161,7 +171,8 @@ public class ConnectionPool {
     ConnectionContext conn = null;
     List<ConnectionContext> tmpConnections = this.connections;
     int size = tmpConnections.size();
-    int threadIndex = this.clientIndex.getAndIncrement();
+    // Inc and mask off sign bit, lookup index should be non-negative int
+    int threadIndex = this.clientIndex.getAndIncrement() & 0x7FFFFFFF;
     for (int i=0; i<size; i++) {
       int index = (threadIndex + i) % size;
       conn = tmpConnections.get(index);
@@ -290,7 +301,7 @@ public class ConnectionPool {
    * Create a new proxy wrapper for a client NN connection.
    * @return Proxy for the target ClientProtocol that contains the user's
    *         security context.
-   * @throws IOException
+   * @throws IOException If it cannot get a new connection.
    */
   public ConnectionContext newConnection() throws IOException {
     return newConnection(

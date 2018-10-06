@@ -23,6 +23,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.argThat;
+import static org.mockito.Matchers.refEq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
@@ -116,7 +117,7 @@ public class TestContainer {
   final NodeManagerMetrics metrics = NodeManagerMetrics.create();
   final Configuration conf = new YarnConfiguration();
   final String FAKE_LOCALIZATION_ERROR = "Fake localization error";
-  
+
   /**
    * Verify correct container request events sent to localizer.
    */
@@ -591,9 +592,8 @@ public class TestContainer {
       Assert.assertEquals(ContainerExitStatus.KILLED_BY_RESOURCEMANAGER,
           containerMetrics.exitCode.value());
       Assert.assertTrue(containerMetrics.startTime.value() > 0);
-      Assert.assertTrue(
-          containerMetrics.finishTime.value() > containerMetrics.startTime
-              .value());
+      Assert.assertTrue(containerMetrics.finishTime.value() >=
+              containerMetrics.startTime.value());
       Assert.assertEquals(ContainerEventType.KILL_CONTAINER,
           wc.initStateToEvent.get(ContainerState.NEW));
       Assert.assertEquals(ContainerState.DONE,
@@ -665,6 +665,17 @@ public class TestContainer {
       ContainerLaunch launcher = wc.launcher.running.get(wc.c.getContainerId());
       wc.killContainer();
       assertEquals(ContainerState.KILLING, wc.c.getContainerState());
+
+      // check that container cleanup hasn't started at this point.
+      LocalizationCleanupMatcher cleanupResources =
+          new LocalizationCleanupMatcher(wc.c);
+      verify(wc.localizerBus, times(0)).handle(argThat(cleanupResources));
+
+      // check if containerlauncher cleans up the container launch.
+      verify(wc.launcherBus)
+          .handle(refEq(new ContainersLauncherEvent(wc.c,
+              ContainersLauncherEventType.CLEANUP_CONTAINER), "timestamp"));
+
       launcher.call();
       wc.drainDispatcherEvents();
       assertEquals(ContainerState.CONTAINER_CLEANEDUP_AFTER_KILL,
@@ -677,6 +688,7 @@ public class TestContainer {
       assertEquals(ContainerState.DONE, wc.c.getContainerState());
       assertEquals(killed + 1, metrics.getKilledContainers());
       assertEquals(0, metrics.getRunningContainers());
+      assertEquals(0, wc.launcher.running.size());
     } finally {
       if (wc != null) {
         wc.finished();
@@ -1146,7 +1158,7 @@ public class TestContainer {
     ResourcesReleasedMatcher matchesReq =
         new ResourcesReleasedMatcher(wc.localResources, EnumSet.of(
             LocalResourceVisibility.PUBLIC, LocalResourceVisibility.PRIVATE,
-            LocalResourceVisibility.APPLICATION));
+            LocalResourceVisibility.APPLICATION), wc.c);
     verify(wc.localizerBus, atLeastOnce()).handle(argThat(matchesReq));
   }
 
@@ -1162,13 +1174,35 @@ public class TestContainer {
             wc.c.getContainerId().toString())));
   }
 
-  private static class ResourcesReleasedMatcher extends
+  // Argument matcher for matching container localization cleanup event.
+  private static class LocalizationCleanupMatcher extends
       ArgumentMatcher<LocalizationEvent> {
+    Container c;
+
+    LocalizationCleanupMatcher(Container c){
+      this.c = c;
+    }
+
+    @Override
+    public boolean matches(Object o) {
+      if (!(o instanceof ContainerLocalizationCleanupEvent)) {
+        return false;
+      }
+      ContainerLocalizationCleanupEvent evt =
+          (ContainerLocalizationCleanupEvent) o;
+
+      return (evt.getContainer() == c);
+    }
+  }
+
+  private static class ResourcesReleasedMatcher extends
+      LocalizationCleanupMatcher {
     final HashSet<LocalResourceRequest> resources =
         new HashSet<LocalResourceRequest>();
 
     ResourcesReleasedMatcher(Map<String, LocalResource> allResources,
-        EnumSet<LocalResourceVisibility> vis) throws URISyntaxException {
+        EnumSet<LocalResourceVisibility> vis, Container c) throws URISyntaxException {
+      super(c);
       for (Entry<String, LocalResource> e : allResources.entrySet()) {
         if (vis.contains(e.getValue().getVisibility())) {
           resources.add(new LocalResourceRequest(e.getValue()));
@@ -1178,9 +1212,12 @@ public class TestContainer {
 
     @Override
     public boolean matches(Object o) {
-      if (!(o instanceof ContainerLocalizationCleanupEvent)) {
+      // match event type and container.
+      if(!super.matches(o)){
         return false;
       }
+
+      // match resources.
       ContainerLocalizationCleanupEvent evt =
           (ContainerLocalizationCleanupEvent) o;
       final HashSet<LocalResourceRequest> expected =
@@ -1612,4 +1649,5 @@ public class TestContainer {
       return ((ContainerImpl)c).getRetryPolicy();
     }
   }
+
 }

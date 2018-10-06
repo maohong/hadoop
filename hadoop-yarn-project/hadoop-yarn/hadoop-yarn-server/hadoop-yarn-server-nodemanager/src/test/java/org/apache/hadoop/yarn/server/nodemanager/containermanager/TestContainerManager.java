@@ -320,9 +320,8 @@ public class TestContainerManager extends BaseContainerManagerTest {
 
   @Test (timeout = 10000L)
   public void testAuxPathHandler() throws Exception {
-    File testDir = GenericTestUtils.getTestDir(GenericTestUtils.getTestDir(
-        TestContainerManager.class.getSimpleName() + "LocDir").
-        getAbsolutePath());
+    File testDir = GenericTestUtils
+        .getTestDir(TestContainerManager.class.getSimpleName() + "LocDir");
     testDir.mkdirs();
     File testFile = new File(testDir, "test");
     testFile.createNewFile();
@@ -1486,8 +1485,6 @@ public class TestContainerManager extends BaseContainerManagerTest {
     containerManager.start();
 
     List<StartContainerRequest> list = new ArrayList<>();
-    ContainerLaunchContext containerLaunchContext =
-        recordFactory.newRecordInstance(ContainerLaunchContext.class);
     for (int i = 0; i < 10; i++) {
       ContainerId cId = createContainerId(i);
       long identifier = 0;
@@ -1500,8 +1497,9 @@ public class TestContainerManager extends BaseContainerManagerTest {
           createContainerToken(cId, identifier, context.getNodeId(), user,
             context.getContainerTokenSecretManager());
       StartContainerRequest request =
-          StartContainerRequest.newInstance(containerLaunchContext,
-            containerToken);
+          StartContainerRequest.newInstance(
+              recordFactory.newRecordInstance(ContainerLaunchContext.class),
+              containerToken);
       list.add(request);
     }
     StartContainersRequest requestList =
@@ -1531,9 +1529,6 @@ public class TestContainerManager extends BaseContainerManagerTest {
   public void testMultipleContainersStopAndGetStatus() throws Exception {
     containerManager.start();
     List<StartContainerRequest> startRequest = new ArrayList<>();
-    ContainerLaunchContext containerLaunchContext =
-        recordFactory.newRecordInstance(ContainerLaunchContext.class);
-
     List<ContainerId> containerIds = new ArrayList<>();
     for (int i = 0; i < 10; i++) {
       ContainerId cId;
@@ -1547,8 +1542,9 @@ public class TestContainerManager extends BaseContainerManagerTest {
           createContainerToken(cId, DUMMY_RM_IDENTIFIER, context.getNodeId(),
             user, context.getContainerTokenSecretManager());
       StartContainerRequest request =
-          StartContainerRequest.newInstance(containerLaunchContext,
-            containerToken);
+          StartContainerRequest.newInstance(
+              recordFactory.newRecordInstance(ContainerLaunchContext.class),
+              containerToken);
       startRequest.add(request);
       containerIds.add(cId);
     }
@@ -1788,15 +1784,14 @@ public class TestContainerManager extends BaseContainerManagerTest {
     containerManager.start();
     // Start 4 containers 0..4 with default resource (1024, 1)
     List<StartContainerRequest> list = new ArrayList<>();
-    ContainerLaunchContext containerLaunchContext = recordFactory
-        .newRecordInstance(ContainerLaunchContext.class);
     for (int i = 0; i < 4; i++) {
       ContainerId cId = createContainerId(i);
       long identifier = DUMMY_RM_IDENTIFIER;
       Token containerToken = createContainerToken(cId, identifier,
           context.getNodeId(), user, context.getContainerTokenSecretManager());
       StartContainerRequest request = StartContainerRequest.newInstance(
-          containerLaunchContext, containerToken);
+          recordFactory.newRecordInstance(ContainerLaunchContext.class),
+          containerToken);
       list.add(request);
     }
     StartContainersRequest requestList = StartContainersRequest
@@ -1981,15 +1976,11 @@ public class TestContainerManager extends BaseContainerManagerTest {
     Signal signal = ContainerLaunch.translateCommandToSignal(command);
     containerManager.start();
 
-    File scriptFile = new File(tmpDir, "scriptFile.sh");
+    File scriptFile = Shell.appendScriptExtension(tmpDir, "scriptFile");
     PrintWriter fileWriter = new PrintWriter(scriptFile);
     File processStartFile =
         new File(tmpDir, "start_file.txt").getAbsoluteFile();
-    fileWriter.write("\numask 0"); // So that start file is readable by the test
-    fileWriter.write("\necho Hello World! > " + processStartFile);
-    fileWriter.write("\necho $$ >> " + processStartFile);
-    fileWriter.write("\nexec sleep 1000s");
-    fileWriter.close();
+    writeScriptFile(fileWriter, "Hello world!", processStartFile, null, false);
 
     ContainerLaunchContext containerLaunchContext =
         recordFactory.newRecordInstance(ContainerLaunchContext.class);
@@ -2012,9 +2003,8 @@ public class TestContainerManager extends BaseContainerManagerTest {
         new HashMap<String, LocalResource>();
     localResources.put(destinationFile, rsrc_alpha);
     containerLaunchContext.setLocalResources(localResources);
-    List<String> commands = new ArrayList<>();
-    commands.add("/bin/bash");
-    commands.add(scriptFile.getAbsolutePath());
+    List<String> commands =
+        Arrays.asList(Shell.getRunScriptCommand(scriptFile));
     containerLaunchContext.setCommands(commands);
     StartContainerRequest scRequest =
         StartContainerRequest.newInstance(

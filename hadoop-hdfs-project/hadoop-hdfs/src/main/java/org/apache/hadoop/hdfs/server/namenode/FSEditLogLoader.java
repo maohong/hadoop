@@ -28,8 +28,8 @@ import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.List;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.fs.FileSystem;
@@ -121,7 +121,8 @@ import com.google.common.base.Preconditions;
 @InterfaceAudience.Private
 @InterfaceStability.Evolving
 public class FSEditLogLoader {
-  static final Log LOG = LogFactory.getLog(FSEditLogLoader.class.getName());
+  static final Logger LOG =
+      LoggerFactory.getLogger(FSEditLogLoader.class.getName());
   static final long REPLAY_TRANSACTION_LOG_INTERVAL = 1000; // 1sec
 
   private final FSNamesystem fsNamesys;
@@ -138,7 +139,7 @@ public class FSEditLogLoader {
   
   long loadFSEdits(EditLogInputStream edits, long expectedStartingTxId)
       throws IOException {
-    return loadFSEdits(edits, expectedStartingTxId, null, null);
+    return loadFSEdits(edits, expectedStartingTxId, Long.MAX_VALUE, null, null);
   }
 
   /**
@@ -147,6 +148,7 @@ public class FSEditLogLoader {
    * along.
    */
   long loadFSEdits(EditLogInputStream edits, long expectedStartingTxId,
+      long maxTxnsToRead,
       StartupOption startOpt, MetaRecoveryContext recovery) throws IOException {
     StartupProgress prog = NameNode.getStartupProgress();
     Step step = createStartupProgressStep(edits);
@@ -154,9 +156,10 @@ public class FSEditLogLoader {
     fsNamesys.writeLock();
     try {
       long startTime = monotonicNow();
-      FSImage.LOG.info("Start loading edits file " + edits.getName());
+      FSImage.LOG.info("Start loading edits file " + edits.getName()
+          + " maxTxnsToRead = " + maxTxnsToRead);
       long numEdits = loadEditRecords(edits, false, expectedStartingTxId,
-          startOpt, recovery);
+          maxTxnsToRead, startOpt, recovery);
       FSImage.LOG.info("Edits file " + edits.getName() 
           + " of size " + edits.length() + " edits # " + numEdits 
           + " loaded in " + (monotonicNow()-startTime)/1000 + " seconds");
@@ -171,8 +174,13 @@ public class FSEditLogLoader {
   long loadEditRecords(EditLogInputStream in, boolean closeOnExit,
       long expectedStartingTxId, StartupOption startOpt,
       MetaRecoveryContext recovery) throws IOException {
-    FSDirectory fsDir = fsNamesys.dir;
+    return loadEditRecords(in, closeOnExit, expectedStartingTxId,
+        Long.MAX_VALUE, startOpt, recovery);
+  }
 
+  long loadEditRecords(EditLogInputStream in, boolean closeOnExit,
+      long expectedStartingTxId, long maxTxnsToRead, StartupOption startOpt,
+      MetaRecoveryContext recovery) throws IOException {
     EnumMap<FSEditLogOpCodes, Holder<Integer>> opCounts =
       new EnumMap<FSEditLogOpCodes, Holder<Integer>>(FSEditLogOpCodes.class);
 
@@ -181,6 +189,7 @@ public class FSEditLogLoader {
     }
 
     fsNamesys.writeLock();
+    FSDirectory fsDir = fsNamesys.dir;
     fsDir.writeLock();
 
     long recentOpcodeOffsets[] = new long[4];
@@ -285,6 +294,9 @@ public class FSEditLogLoader {
           }
           numEdits++;
           totalEdits++;
+          if(numEdits >= maxTxnsToRead) {
+            break;
+          }
         } catch (RollingUpgradeOp.RollbackException e) {
           LOG.info("Stopped at OP_START_ROLLING_UPGRADE for rollback.");
           break;
@@ -308,7 +320,11 @@ public class FSEditLogLoader {
 
       if (FSImage.LOG.isDebugEnabled()) {
         dumpOpCounts(opCounts);
+        FSImage.LOG.debug("maxTxnsToRead = " + maxTxnsToRead
+            + " actual edits read = " + numEdits);
       }
+      assert numEdits <= maxTxnsToRead || numEdits == 1 :
+        "should read at least one txn, but not more than the configured max";
     }
     return numEdits;
   }

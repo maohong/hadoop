@@ -64,8 +64,8 @@ import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
 import org.apache.commons.cli.PosixParser;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.hadoop.HadoopIllegalArgumentException;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.conf.Configuration;
@@ -99,7 +99,8 @@ import com.google.protobuf.BlockingService;
 
 @InterfaceAudience.Private
 public class DFSUtil {
-  public static final Log LOG = LogFactory.getLog(DFSUtil.class.getName());
+  public static final Logger LOG =
+      LoggerFactory.getLogger(DFSUtil.class.getName());
   
   private DFSUtil() { /* Hidden constructor */ }
   
@@ -1130,7 +1131,42 @@ public class DFSUtil {
     
     return getSuffixIDs(conf, addressKey, null, nnId, LOCAL_ADDRESS_MATCHER)[0];
   }
-  
+
+  /**
+   * Determine the {@link InetSocketAddress} to bind to, for any service.
+   * In case of HA or federation, the address is assumed to specified as
+   * {@code confKey}.NAMESPACEID.NAMENODEID as appropriate.
+   *
+   * @param conf configuration.
+   * @param confKey configuration key (prefix if HA/federation) used to
+   *        specify the address for the service.
+   * @param defaultValue default value for the address.
+   * @param bindHostKey configuration key (prefix if HA/federation)
+   *        specifying host to bind to.
+   * @return the address to bind to.
+   */
+  public static InetSocketAddress getBindAddress(Configuration conf,
+      String confKey, String defaultValue, String bindHostKey) {
+    InetSocketAddress address;
+    String nsId = DFSUtil.getNamenodeNameServiceId(conf);
+    String bindHostActualKey;
+    if (nsId != null) {
+      String namenodeId = HAUtil.getNameNodeId(conf, nsId);
+      address = DFSUtilClient.getAddressesForNameserviceId(
+          conf, nsId, null, confKey).get(namenodeId);
+      bindHostActualKey = DFSUtil.addKeySuffixes(bindHostKey, nsId, namenodeId);
+    } else {
+      address = NetUtils.createSocketAddr(conf.get(confKey, defaultValue));
+      bindHostActualKey = bindHostKey;
+    }
+
+    String bindHost = conf.get(bindHostActualKey);
+    if (bindHost == null || bindHost.isEmpty()) {
+      bindHost = address.getHostName();
+    }
+    return new InetSocketAddress(bindHost, address.getPort());
+  }
+
   /**
    * Returns nameservice Id and namenode Id when the local host matches the
    * configuration parameter {@code addressKey}.<nameservice Id>.<namenode Id>
@@ -1420,7 +1456,7 @@ public class DFSUtil {
         "It should be a positive, non-zero integer value.");
     return blocksReplWorkMultiplier;
   }
-  
+
   /**
    * Get SPNEGO keytab Key from configuration
    * 

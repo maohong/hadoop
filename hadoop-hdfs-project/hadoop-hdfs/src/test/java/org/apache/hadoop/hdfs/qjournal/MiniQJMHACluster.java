@@ -17,8 +17,8 @@
  */
 package org.apache.hadoop.hdfs.qjournal;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
@@ -38,7 +38,8 @@ public class MiniQJMHACluster {
   private MiniDFSCluster cluster;
   private MiniJournalCluster journalCluster;
   private final Configuration conf;
-  private static final Log LOG = LogFactory.getLog(MiniQJMHACluster.class);
+  private static final Logger LOG =
+      LoggerFactory.getLogger(MiniQJMHACluster.class);
 
   public static final String NAMESERVICE = "ns1";
   private static final Random RANDOM = new Random();
@@ -49,6 +50,7 @@ public class MiniQJMHACluster {
     private int numNNs = 2;
     private final MiniDFSCluster.Builder dfsBuilder;
     private boolean forceRemoteEditsOnly = false;
+    private String baseDir;
 
     public Builder(Configuration conf) {
       this.conf = conf;
@@ -67,6 +69,11 @@ public class MiniQJMHACluster {
 
     public void startupOption(StartupOption startOpt) {
       this.startOpt = startOpt;
+    }
+
+    public Builder baseDir(String d) {
+      this.baseDir = d;
+      return this;
     }
 
     public Builder setNumNameNodes(int nns) {
@@ -104,8 +111,8 @@ public class MiniQJMHACluster {
         basePort = 10000 + RANDOM.nextInt(1000) * 4;
         LOG.info("Set MiniQJMHACluster basePort to " + basePort);
         // start 3 journal nodes
-        journalCluster = new MiniJournalCluster.Builder(conf).format(true)
-            .build();
+        journalCluster = new MiniJournalCluster.Builder(conf)
+            .baseDir(builder.baseDir).format(true).build();
         journalCluster.waitActive();
         journalCluster.setNamenodeSharedEditsConf(NAMESERVICE);
         URI journalURI = journalCluster.getQuorumJournalURI(NAMESERVICE);

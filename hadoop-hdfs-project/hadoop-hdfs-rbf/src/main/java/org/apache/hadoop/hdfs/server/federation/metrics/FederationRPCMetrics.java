@@ -54,6 +54,8 @@ public class FederationRPCMetrics implements FederationRPCMBean {
   private MutableCounterLong proxyOpFailureStandby;
   @Metric("Number of operations to hit a standby NN")
   private MutableCounterLong proxyOpFailureCommunicate;
+  @Metric("Number of operations to hit a client overloaded Router")
+  private MutableCounterLong proxyOpFailureClientOverloaded;
   @Metric("Number of operations not implemented")
   private MutableCounterLong proxyOpNotImplemented;
   @Metric("Number of operation retries")
@@ -84,15 +86,6 @@ public class FederationRPCMetrics implements FederationRPCMBean {
   }
 
   /**
-   * Convert nanoseconds to milliseconds.
-   * @param ns Time in nanoseconds.
-   * @return Time in milliseconds.
-   */
-  private static double toMs(double ns) {
-    return ns / 1000000;
-  }
-
-  /**
    * Reset the metrics system.
    */
   public static void reset() {
@@ -118,6 +111,14 @@ public class FederationRPCMetrics implements FederationRPCMBean {
     return proxyOpFailureCommunicate.value();
   }
 
+  public void incrProxyOpFailureClientOverloaded() {
+    proxyOpFailureClientOverloaded.incr();
+  }
+
+  @Override
+  public long getProxyOpFailureClientOverloaded() {
+    return proxyOpFailureClientOverloaded.value();
+  }
 
   public void incrProxyOpNotImplemented() {
     proxyOpNotImplemented.incr();
@@ -220,7 +221,7 @@ public class FederationRPCMetrics implements FederationRPCMBean {
 
   @Override
   public double getProxyAvg() {
-    return toMs(proxy.lastStat().mean());
+    return proxy.lastStat().mean();
   }
 
   @Override
@@ -240,7 +241,7 @@ public class FederationRPCMetrics implements FederationRPCMBean {
 
   @Override
   public double getProcessingAvg() {
-    return toMs(processing.lastStat().mean());
+    return processing.lastStat().mean();
   }
 
   @Override

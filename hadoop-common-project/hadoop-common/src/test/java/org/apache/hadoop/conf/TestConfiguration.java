@@ -62,7 +62,7 @@ import static org.apache.hadoop.conf.StorageUnit.TB;
 import static org.hamcrest.core.Is.is;
 import static org.junit.Assert.*;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration.IntegerRanges;
 import org.apache.hadoop.fs.FileUtil;
 import org.apache.hadoop.fs.Path;
@@ -2361,8 +2361,8 @@ public class TestConfiguration {
     try{
       out = new BufferedWriter(new FileWriter(CONFIG_CORE));
       startConfig();
-      appendProperty("hadoop.system.tags", "YARN,HDFS,NAMENODE");
-      appendProperty("hadoop.custom.tags", "MYCUSTOMTAG");
+      appendProperty("hadoop.tags.system", "YARN,HDFS,NAMENODE");
+      appendProperty("hadoop.tags.custom", "MYCUSTOMTAG");
       appendPropertyByTag("dfs.cblock.trace.io", "false", "YARN");
       appendPropertyByTag("dfs.replication", "1", "HDFS");
       appendPropertyByTag("dfs.namenode.logging.level", "INFO", "NAMENODE");

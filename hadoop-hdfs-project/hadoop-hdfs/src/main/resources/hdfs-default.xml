@@ -327,6 +327,20 @@
 </property>
 
 <property>
+  <name>dfs.datanode.du.reserved.calculator</name>
+  <value>org.apache.hadoop.hdfs.server.datanode.fsdataset.impl.ReservedSpaceCalculator$ReservedSpaceCalculatorAbsolute</value>
+  <description>Determines the class of ReservedSpaceCalculator to be used for
+    calculating disk space reservedfor non-HDFS data. The default calculator is
+    ReservedSpaceCalculatorAbsolute which will use dfs.datanode.du.reserved
+    for a static reserved number of bytes. ReservedSpaceCalculatorPercentage
+    will use dfs.datanode.du.reserved.pct to calculate the reserved number
+    of bytes based on the size of the storage. ReservedSpaceCalculatorConservative and
+    ReservedSpaceCalculatorAggressive will use their combination, Conservative will use
+    maximum, Aggressive minimum. For more details see ReservedSpaceCalculator.
+  </description>
+</property>
+
+<property>
   <name>dfs.datanode.du.reserved</name>
   <value>0</value>
   <description>Reserved space in bytes per volume. Always leave this much space free for non dfs use.
@@ -335,6 +349,23 @@
       For example, reserved space for RAM_DISK storage can be configured using property
       'dfs.datanode.du.reserved.ram_disk'. If specific storage type reservation is not configured
       then dfs.datanode.du.reserved will be used.
+      Note: In case of using tune2fs to set reserved-blocks-percentage, or other filesystem tools,
+      then you can possibly run into out of disk errors because hadoop will not check those
+      external tool configurations.
+  </description>
+</property>
+
+<property>
+  <name>dfs.datanode.du.reserved.pct</name>
+  <value>0</value>
+  <description>Reserved space in percentage. Read dfs.datanode.du.reserved.calculator to see
+    when this takes effect. The actual number of bytes reserved will be calculated by using the
+    total capacity of the data directory in question. Specific storage type based reservation
+    is also supported. The property can be followed with corresponding storage types
+    ([ssd]/[disk]/[archive]/[ram_disk]) for cluster with heterogeneous storage.
+    For example, reserved percentage space for RAM_DISK storage can be configured using property
+    'dfs.datanode.du.reserved.pct.ram_disk'. If specific storage type reservation is not configured
+    then dfs.datanode.du.reserved.pct will be used.
   </description>
 </property>
 
@@ -581,6 +612,15 @@
       Setting this lower than the dfs.namenode.replication.min
       is not recommend and/or dangerous for production setups.
       When it's not set it takes value from dfs.namenode.replication.min
+  </description>
+</property>
+
+<property>
+  <name>dfs.namenode.max-corrupt-file-blocks-returned</name>
+  <value>100</value>
+  <description>
+      The maximum number of corrupt file blocks listed by NameNode Web UI,
+      JMX and other client request.
   </description>
 </property>
 
@@ -1236,13 +1276,28 @@
   <description>The number of volumes that are allowed to
   fail before a datanode stops offering service. By default
   any volume failure will cause a datanode to shutdown.
+  The range of the value is -1 now, -1 represents the minimum
+  of volume valids is 1.
+  </description>
+</property>
+
+<property>
+  <name>dfs.datanode.volumes.replica-add.threadpool.size</name>
+  <value></value>
+  <description>Specifies the maximum number of threads to use for
+  adding block in volume. Default value for this configuration is
+  max of (volume * number of bp_service, number of processor).
   </description>
 </property>
 
 <property>
   <name>dfs.image.compress</name>
   <value>false</value>
-  <description>Should the dfs image be compressed?
+  <description>When this value is true, the dfs image will be compressed.
+    Enabling this will be very helpful if dfs image is large since it can
+    avoid consuming a lot of network bandwidth when SBN uploads a new dfs
+    image to ANN. The compressed codec is specified by the setting
+    dfs.image.compression.codec.
   </description>
 </property>
 
@@ -1258,11 +1313,10 @@
   <name>dfs.image.transfer.timeout</name>
   <value>60000</value>
   <description>
-        Socket timeout for image transfer in milliseconds. This timeout and the related
-        dfs.image.transfer.bandwidthPerSec parameter should be configured such
-        that normal image transfer can complete successfully.
-        This timeout prevents client hangs when the sender fails during
-        image transfer. This is socket timeout during image transfer.
+        Socket timeout for the HttpURLConnection instance used in the image
+        transfer. This is measured in milliseconds.
+        This timeout prevents client hangs if the connection is idle
+        for this configured timeout, during image transfer.
   </description>
 </property>
 
@@ -1273,9 +1327,7 @@
         Maximum bandwidth used for regular image transfers (instead of
         bootstrapping the standby namenode), in bytes per second.
         This can help keep normal namenode operations responsive during
-        checkpointing. The maximum bandwidth and timeout in
-        dfs.image.transfer.timeout should be set such that normal image
-        transfers can complete successfully.
+        checkpointing.
         A default value of 0 indicates that throttling is disabled.
         The maximum bandwidth used for bootstrapping standby namenode is
         configured with dfs.image.transfer-bootstrap-standby.bandwidthPerSec.
@@ -2430,6 +2482,17 @@
 </property>
 
 <property>
+  <name>dfs.namenode.caching.enabled</name>
+  <value>true</value>
+  <description>
+    Set to true to enable block caching.  This flag enables the NameNode to
+    maintain a mapping of cached blocks to DataNodes via processing DataNode
+    cache reports.  Based on these reports and addition and removal of caching
+    directives, the NameNode will schedule caching and uncaching work.
+  </description>
+</property>
+
+<property>
   <name>dfs.namenode.path.based.cache.block.map.allocation.percent</name>
   <value>0.25</value>
   <description>
@@ -3510,6 +3573,16 @@
 </property>
 
 <property>
+  <name>dfs.balancer.max-iteration-time</name>
+  <value>1200000</value>
+  <description>
+    Maximum amount of time while an iteration can be run by the Balancer. After
+    this time the Balancer will stop the iteration, and reevaluate the work
+    needs to be done to Balance the cluster. The default value is 20 minutes.
+  </description>
+</property>
+
+<property>
   <name>dfs.block.invalidate.limit</name>
   <value>1000</value>
   <description>
@@ -3600,6 +3673,18 @@
     configured Failover proxy provider for the host.  For more detailed
     information, please consult the "Configuration Details" section of
     the HDFS High Availability documentation.
+  </description>
+</property>
+
+<property>
+  <name>dfs.client.failover.random.order</name>
+  <value>false</value>
+  <description>
+    Determines if the failover proxies are picked in random order instead of the
+    configured order. The prefix can be used with an optional nameservice ID
+    (of form dfs.client.failover.random.order[.nameservice]) in case multiple
+    nameservices exist and random order should be enabled for specific
+    nameservices.
   </description>
 </property>
 
@@ -4435,6 +4520,131 @@
 </property>
 
 <property>
+  <name>dfs.storage.policy.satisfier.enabled</name>
+  <value>false</value>
+  <name>dfs.storage.policy.satisfier.mode</name>
+  <value>none</value>
+  <description>
+    Following values are supported - external, none.
+    If external, StoragePolicySatisfier will be enabled and started as an independent service outside namenode.
+    If none, StoragePolicySatisfier is disabled.
+    By default, StoragePolicySatisfier is disabled.
+    Administrator can dynamically change StoragePolicySatisfier mode by using reconfiguration option.
+    Dynamic mode change can be achieved in the following way.
+    1. Edit/update this configuration property values in hdfs-site.xml
+    2. Execute the reconfig command on hadoop command line prompt.
+       For example:$hdfs -reconfig namenode nn_host:port start
+  </description>
+</property>
+
+<property>
+  <name>dfs.storage.policy.satisfier.queue.limit</name>
+  <value>1000</value>
+  <description>
+    Storage policy satisfier queue size. This queue contains the currently
+    scheduled file's inode ID for statisfy the policy.
+    Default value is 1000.
+  </description>
+</property>
+
+<property>
+  <name>dfs.storage.policy.satisfier.work.multiplier.per.iteration</name>
+  <value>1</value>
+  <description>
+    *Note*: Advanced property. Change with caution.
+    This determines the total amount of block transfers to begin in
+    one iteration, for satisfy the policy. The actual number is obtained by
+    multiplying this multiplier with the total number of live nodes in the
+    cluster. The result number is the number of blocks to begin transfers
+    immediately. This number can be any positive, non-zero integer.
+  </description>
+</property>
+
+<property>
+  <name>dfs.storage.policy.satisfier.recheck.timeout.millis</name>
+  <value>60000</value>
+  <description>
+    Blocks storage movements monitor re-check interval in milliseconds.
+    This check will verify whether any blocks storage movement results arrived from DN
+    and also verify if any of file blocks movements not at all reported to DN
+    since dfs.storage.policy.satisfier.self.retry.timeout.
+    The default value is 1 * 60 * 1000 (1 mins)
+  </description>
+</property>
+
+<property>
+  <name>dfs.storage.policy.satisfier.self.retry.timeout.millis</name>
+  <value>300000</value>
+  <description>
+    If any of file related block movements not at all reported by datanode,
+    then after this timeout(in milliseconds), the item will be added back to movement needed list
+    at namenode which will be retried for block movements.
+    The default value is 5 * 60 * 1000 (5 mins)
+  </description>
+</property>
+
+<property>
+  <name>dfs.storage.policy.satisfier.retry.max.attempts</name>
+  <value>3</value>
+  <description>
+    Max retry to satisfy the block storage policy. After this retry block will be removed
+    from the movement needed queue.
+  </description>
+</property>
+
+<property>
+  <name>dfs.storage.policy.satisfier.datanode.cache.refresh.interval.ms</name>
+  <value>300000</value>
+  <description>
+    How often to refresh the datanode storages cache in milliseconds. This cache
+    keeps live datanode storage reports fetched from namenode. After elapsed time,
+    it will again fetch latest datanodes from namenode.
+    By default, this parameter is set to 5 minutes.
+  </description>
+</property>
+
+<property>
+  <name>dfs.storage.policy.satisfier.max.outstanding.paths</name>
+  <value>10000</value>
+  <description>
+    Defines the maximum number of paths to satisfy that can be queued up in the
+    Satisfier call queue in a period of time. Default value is 10000.
+  </description>
+</property>
+
+<property>
+  <name>dfs.storage.policy.satisfier.address</name>
+  <value>0.0.0.0:0</value>
+  <description>
+    The hostname used for a keytab based Kerberos login. Keytab based login
+    is required when dfs.storage.policy.satisfier.mode is external.
+  </description>
+</property>
+
+<property>
+  <name>dfs.storage.policy.satisfier.keytab.file</name>
+  <value></value>
+  <description>
+    The keytab file used by external StoragePolicySatisfier to login as its
+    service principal. The principal name is configured with
+    dfs.storage.policy.satisfier.kerberos.principal. Keytab based login
+    is required when dfs.storage.policy.satisfier.mode is external.
+  </description>
+</property>
+
+<property>
+  <name>dfs.storage.policy.satisfier.kerberos.principal</name>
+  <value></value>
+  <description>
+    The StoragePolicySatisfier principal. This is typically set to
+    satisfier/_HOST@REALM.TLD. The StoragePolicySatisfier will substitute
+    _HOST with its own fully qualified hostname at startup. The _HOST placeholder
+    allows using the same configuration setting on different servers. Keytab
+    based login is required when dfs.storage.policy.satisfier.mode is external.
+  </description>
+</property>
+
+<property>
   <name>dfs.pipeline.ecn</name>
   <value>false</value>
   <description>
@@ -4517,6 +4727,24 @@
   <value>20000</value>
   <description>
     Write timeout in milliseconds when writing to a quorum of remote
+    journals.
+  </description>
+</property>
+
+<property>
+  <name>dfs.qjournal.http.open.timeout.ms</name>
+  <value>60000</value>
+  <description>
+    Timeout in milliseconds when open a new HTTP connection to remote
+    journals.
+  </description>
+</property>
+
+<property>
+  <name>dfs.qjournal.http.read.timeout.ms</name>
+  <value>60000</value>
+  <description>
+    Timeout in milliseconds when reading from a HTTP connection from remote
     journals.
   </description>
 </property>
@@ -4764,9 +4992,27 @@
 
   <property>
     <name>dfs.provided.aliasmap.inmemory.dnrpc-address</name>
-    <value>0.0.0.0:50200</value>
+    <value></value>
     <description>
-      The address where the aliasmap server will be running
+      The address where the aliasmap server will be running. In the case of
+      HA/Federation where multiple namenodes exist, and if the Namenode is
+      configured to run the aliasmap server
+      (dfs.provided.aliasmap.inmemory.enabled is set to true),
+      the name service id is added to the name, e.g.,
+      dfs.provided.aliasmap.inmemory.rpc.address.EXAMPLENAMESERVICE.
+      The value of this property will take the form of host:rpc-port.
+    </description>
+  </property>
+
+  <property>
+    <name>dfs.provided.aliasmap.inmemory.rpc.bind-host</name>
+    <value></value>
+    <description>
+      The actual address the in-memory aliasmap server will bind to.
+      If this optional address is set, it overrides the hostname portion of
+      dfs.provided.aliasmap.inmemory.rpc.address.
+      This is useful for making the name node listen on all interfaces by
+      setting it to 0.0.0.0.
     </description>
   </property>
 
@@ -4785,6 +5031,15 @@
       Don't use the aliasmap by default. Some tests will fail
       because they try to start the namenode twice with the
       same parameters if you turn it on.
+    </description>
+  </property>
+
+  <property>
+    <name>dfs.provided.aliasmap.inmemory.server.log</name>
+    <value>false</value>
+    <description>
+      Ensures that InMemoryAliasMap server logs every call to it.
+      Set to false by default.
     </description>
   </property>
 
@@ -4927,6 +5182,16 @@
       Disable reformat of NameNode. If it's value is set to "true"
       and metadata directories already exist then attempt to format NameNode
       will throw NameNodeFormatException.
+    </description>
+  </property>
+
+  <property>
+    <name>dfs.namenode.block.deletion.increment</name>
+    <value>1000</value>
+    <description>
+      The number of block deletion increment.
+      This setting will control the block increment deletion rate to
+      ensure that other waiters on the lock can get in.
     </description>
   </property>
 </configuration>

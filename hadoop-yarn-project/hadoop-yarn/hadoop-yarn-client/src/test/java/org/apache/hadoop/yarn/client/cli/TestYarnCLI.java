@@ -17,6 +17,8 @@
  */
 package org.apache.hadoop.yarn.client.cli;
 
+import org.apache.hadoop.yarn.api.records.NodeAttribute;
+import org.apache.hadoop.yarn.api.records.NodeAttributeType;
 import static org.junit.Assert.assertEquals;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyInt;
@@ -47,7 +49,7 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 import org.apache.commons.cli.Options;
-import org.apache.commons.lang.time.DateFormatUtils;
+import org.apache.commons.lang3.time.DateFormatUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.yarn.api.protocolrecords.UpdateApplicationTimeoutsRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.UpdateApplicationTimeoutsResponse;
@@ -292,6 +294,7 @@ public class TestYarnCLI {
     pw.println("\tStart-Time : 1234");
     pw.println("\tFinish-Time : 5678");
     pw.println("\tState : COMPLETE");
+    pw.println("\tExecution-Type : GUARANTEED");
     pw.println("\tLOG-URL : logURL");
     pw.println("\tHost : host:1234");
     pw.println("\tNodeHttpAddress : http://host:2345");
@@ -1543,8 +1546,8 @@ public class TestYarnCLI {
   public void testNodeStatus() throws Exception {
     NodeId nodeId = NodeId.newInstance("host0", 0);
     NodeCLI cli = new NodeCLI();
-    when(client.getNodeReports()).thenReturn(
-                    getNodeReports(3, NodeState.RUNNING, false));
+    when(client.getNodeReports())
+        .thenReturn(getNodeReports(3, NodeState.RUNNING, false, false, false));
     cli.setClient(client);
     cli.setSysOutPrintStream(sysOut);
     cli.setSysErrPrintStream(sysErr);
@@ -1567,6 +1570,8 @@ public class TestYarnCLI {
     pw.println("\tCPU-Used : 0 vcores");
     pw.println("\tCPU-Capacity : 0 vcores");
     pw.println("\tNode-Labels : a,b,c,x,y,z");
+    pw.println("\tNode Attributes : rm.yarn.io/GPU(STRING)=ARM");
+    pw.println("\t                  rm.yarn.io/CPU(STRING)=ARM");
     pw.println("\tResource Utilization by Node : PMem:2048 MB, VMem:4096 MB, VCores:8.0");
     pw.println("\tResource Utilization by Containers : PMem:1024 MB, VMem:2048 MB, VCores:4.0");
     pw.close();
@@ -1603,6 +1608,7 @@ public class TestYarnCLI {
     pw.println("\tCPU-Used : 0 vcores");
     pw.println("\tCPU-Capacity : 0 vcores");
     pw.println("\tNode-Labels : ");
+    pw.println("\tNode Attributes : ");
     pw.println("\tResource Utilization by Node : PMem:2048 MB, VMem:4096 MB, VCores:8.0");
     pw.println("\tResource Utilization by Containers : PMem:1024 MB, VMem:2048 MB, VCores:4.0");
     pw.close();
@@ -1615,8 +1621,8 @@ public class TestYarnCLI {
   public void testNodeStatusWithEmptyResourceUtilization() throws Exception {
     NodeId nodeId = NodeId.newInstance("host0", 0);
     NodeCLI cli = new NodeCLI();
-    when(client.getNodeReports()).thenReturn(
-                    getNodeReports(3, NodeState.RUNNING, false, true));
+    when(client.getNodeReports())
+        .thenReturn(getNodeReports(3, NodeState.RUNNING, false, true, true));
     cli.setClient(client);
     cli.setSysOutPrintStream(sysOut);
     cli.setSysErrPrintStream(sysErr);
@@ -1639,6 +1645,7 @@ public class TestYarnCLI {
     pw.println("\tCPU-Used : 0 vcores");
     pw.println("\tCPU-Capacity : 0 vcores");
     pw.println("\tNode-Labels : a,b,c,x,y,z");
+    pw.println("\tNode Attributes : ");
     pw.println("\tResource Utilization by Node : ");
     pw.println("\tResource Utilization by Containers : ");
     pw.close();
@@ -2048,18 +2055,20 @@ public class TestYarnCLI {
     cli.run(new String[] { "application" });
     verify(sysErr).println("Invalid Command Usage : ");
   }
-  
+
   private List<NodeReport> getNodeReports(int noOfNodes, NodeState state) {
-    return getNodeReports(noOfNodes, state, true, false);
+    return getNodeReports(noOfNodes, state, true, false, true);
   }
 
   private List<NodeReport> getNodeReports(int noOfNodes, NodeState state,
-      boolean emptyNodeLabel) {
-    return getNodeReports(noOfNodes, state, emptyNodeLabel, false);
+      boolean emptyNodeLabel, boolean emptyAttributes) {
+    return getNodeReports(noOfNodes, state, emptyNodeLabel, false,
+        emptyAttributes);
   }
 
   private List<NodeReport> getNodeReports(int noOfNodes, NodeState state,
-      boolean emptyNodeLabel, boolean emptyResourceUtilization) {
+      boolean emptyNodeLabel, boolean emptyResourceUtilization,
+      boolean emptyAttributes) {
     List<NodeReport> nodeReports = new ArrayList<NodeReport>();
 
     for (int i = 0; i < noOfNodes; i++) {
@@ -2080,6 +2089,11 @@ public class TestYarnCLI {
             2048, 4096, 8);
         nodeReport.setAggregatedContainersUtilization(containersUtilization);
         nodeReport.setNodeUtilization(nodeUtilization);
+      }
+      if (!emptyAttributes) {
+        nodeReport.setNodeAttributes(ImmutableSet.of(NodeAttribute
+                .newInstance("GPU", NodeAttributeType.STRING, "ARM"),
+            NodeAttribute.newInstance("CPU", NodeAttributeType.STRING, "ARM")));
       }
       nodeReports.add(nodeReport);
     }
@@ -2124,6 +2138,13 @@ public class TestYarnCLI {
     pw.println("                                          applications based on input");
     pw.println("                                          comma-separated list of");
     pw.println("                                          application types.");
+    pw.println(" -autoFinalize                            Works with -upgrade and");
+    pw.println("                                          -initiate options to initiate");
+    pw.println("                                          the upgrade of the application");
+    pw.println("                                          with the ability to finalize the");
+    pw.println("                                          upgrade automatically.");
+    pw.println(" -cancel                                  Works with -upgrade option to");
+    pw.println("                                          cancel current upgrade.");
     pw.println(" -changeQueue <Queue Name>                Moves application to a new");
     pw.println("                                          queue. ApplicationId can be");
     pw.println("                                          passed using 'appId' option.");
@@ -2138,6 +2159,9 @@ public class TestYarnCLI {
     pw.println("                                          long-running service. Supports");
     pw.println("                                          absolute or relative changes,");
     pw.println("                                          such as +1, 2, or -3.");
+    pw.println(" -components <Components>                 Works with -upgrade option to");
+    pw.println("                                          trigger the upgrade of specified");
+    pw.println("                                          components of the application.");
     pw.println(" -destroy <Application Name>              Destroys a saved application");
     pw.println("                                          specification and removes all");
     pw.println("                                          application data permanently.");
@@ -2152,6 +2176,12 @@ public class TestYarnCLI {
     pw.println("                                          Optionally a destination folder");
     pw.println("                                          for the tarball can be");
     pw.println("                                          specified.");
+    pw.println(" -express <arg>                           Works with -upgrade option to");
+    pw.println("                                          perform express upgrade.  It");
+    pw.println("                                          requires the upgraded");
+    pw.println("                                          application specification file.");
+    pw.println(" -finalize                                Works with -upgrade option to");
+    pw.println("                                          finalize the upgrade.");
     pw.println(" -flex <Application Name or ID>           Changes number of running");
     pw.println("                                          containers for a component of an");
     pw.println("                                          application / long-running");
@@ -2165,6 +2195,15 @@ public class TestYarnCLI {
     pw.println("                                          which client implementation to");
     pw.println("                                          use.");
     pw.println(" -help                                    Displays help for all commands.");
+    pw.println(" -initiate <File Name>                    Works with -upgrade option to");
+    pw.println("                                          initiate the application");
+    pw.println("                                          upgrade. It requires the");
+    pw.println("                                          upgraded application");
+    pw.println("                                          specification file.");
+    pw.println(" -instances <Component Instances>         Works with -upgrade option to");
+    pw.println("                                          trigger the upgrade of specified");
+    pw.println("                                          component instances of the");
+    pw.println("                                          application.");
     pw.println(" -kill <Application ID>                   Kills the application. Set of");
     pw.println("                                          applications can be provided");
     pw.println("                                          separated with space");
@@ -2232,6 +2271,11 @@ public class TestYarnCLI {
     pw.println(" -updatePriority <Priority>               update priority of an");
     pw.println("                                          application. ApplicationId can");
     pw.println("                                          be passed using 'appId' option.");
+    pw.println(" -upgrade <Application Name>              Upgrades an");
+    pw.println("                                          application/long-running");
+    pw.println("                                          service. It requires either");
+    pw.println("                                          -initiate, -instances, or");
+    pw.println("                                          -finalize options.");
     pw.close();
     String appsHelpStr = baos.toString("UTF-8");
     return appsHelpStr;
@@ -2256,13 +2300,17 @@ public class TestYarnCLI {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     PrintWriter pw = new PrintWriter(baos);
     pw.println("usage: container");
+    pw.println(" -appTypes <Types>                Works with -list to specify the app type when application name is provided.");
+    pw.println(" -components <arg>                Works with -list to filter instances based on input comma-separated list of component names.");
     pw.println(" -help                            Displays help for all commands.");
-    pw.println(" -list <Application Attempt ID>   List containers for application attempt.");
+    pw.println(" -list <Application Name or Attempt ID>   List containers for application attempt  when application attempt ID is provided. When application name is provided, then it finds the instances of the application based on app's own implementation, and -appTypes option must be specified unless it is the default yarn-service type. With app name, it supports optional use of -version to filter instances based on app version, -components to filter instances based on component names, -states to filter instances based on instance state.");
     pw.println(" -signal <container ID [signal command]> Signal the container.");
     pw.println("The available signal commands are ");
     pw.println(java.util.Arrays.asList(SignalContainerCommand.values()));
     pw.println("                                 Default command is OUTPUT_THREAD_DUMP.");
+    pw.println(" -states <arg>                    Works with -list to filter instances based on input comma-separated list of instance states.");
     pw.println(" -status <Container ID>           Prints the status of the container.");
+    pw.println(" -version <arg>                   Works with -list to filter instances based on input application version. ");
     pw.close();
     try {
       return normalize(baos.toString("UTF-8"));

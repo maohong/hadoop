@@ -18,7 +18,7 @@
 
 package org.apache.hadoop.yarn.service;
 
-import com.google.common.collect.HashMultimap;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Multimap;
 import org.apache.commons.io.FileUtils;
 import org.apache.hadoop.fs.Path;
@@ -34,8 +34,8 @@ import org.apache.hadoop.yarn.exceptions.YarnException;
 import org.apache.hadoop.yarn.server.resourcemanager.ResourceManager;
 import org.apache.hadoop.yarn.service.api.records.Component;
 import org.apache.hadoop.yarn.service.api.records.ComponentState;
+import org.apache.hadoop.yarn.service.api.records.Configuration;
 import org.apache.hadoop.yarn.service.api.records.Container;
-import org.apache.hadoop.yarn.service.api.records.ContainerState;
 import org.apache.hadoop.yarn.service.api.records.PlacementConstraint;
 import org.apache.hadoop.yarn.service.api.records.PlacementPolicy;
 import org.apache.hadoop.yarn.service.api.records.PlacementScope;
@@ -62,7 +62,7 @@ import java.util.*;
 import java.util.concurrent.TimeoutException;
 
 import static org.apache.hadoop.yarn.api.records.YarnApplicationState.FINISHED;
-import static org.apache.hadoop.yarn.service.conf.YarnServiceConf.YARN_SERVICE_BASE_PATH;
+import static org.apache.hadoop.yarn.service.conf.YarnServiceConf.*;
 import static org.apache.hadoop.yarn.service.exceptions.LauncherExitCodes.EXIT_COMMAND_ARGUMENT_ERROR;
 import static org.apache.hadoop.yarn.service.exceptions.LauncherExitCodes.EXIT_NOT_FOUND;
 
@@ -372,25 +372,128 @@ public class TestYarnNativeServices extends ServiceTestUtils {
   }
 
   @Test(timeout = 200000)
-  public void testUpgradeService() throws Exception {
+  public void testUpgrade() throws Exception {
     setupInternal(NUM_NMS);
+    getConf().setBoolean(YARN_SERVICE_UPGRADE_ENABLED, true);
     ServiceClient client = createClient(getConf());
 
     Service service = createExampleApplication();
     client.actionCreate(service);
-    waitForServiceToBeStarted(client, service);
+    waitForServiceToBeStable(client, service);
 
-    //upgrade the service
+    // upgrade the service
+    Component component = service.getComponents().iterator().next();
+    service.setState(ServiceState.UPGRADING);
     service.setVersion("v2");
-    client.actionUpgrade(service);
+    component.getConfiguration().getEnv().put("key1", "val1");
+    client.initiateUpgrade(service);
 
-    //wait for service to be in upgrade state
+    // wait for service to be in upgrade state
     waitForServiceToBeInState(client, service, ServiceState.UPGRADING);
     SliderFileSystem fs = new SliderFileSystem(getConf());
     Service fromFs = ServiceApiUtil.loadServiceUpgrade(fs,
         service.getName(), service.getVersion());
     Assert.assertEquals(service.getName(), fromFs.getName());
     Assert.assertEquals(service.getVersion(), fromFs.getVersion());
+
+    // upgrade containers
+    Service liveService = client.getStatus(service.getName());
+    client.actionUpgrade(service,
+        liveService.getComponent(component.getName()).getContainers());
+    waitForAllCompToBeReady(client, service);
+
+    // finalize the upgrade
+    client.actionStart(service.getName());
+    waitForServiceToBeStable(client, service);
+    Service active = client.getStatus(service.getName());
+    Assert.assertEquals("component not stable", ComponentState.STABLE,
+        active.getComponent(component.getName()).getState());
+    Assert.assertEquals("comp does not have new env", "val1",
+        active.getComponent(component.getName()).getConfiguration()
+            .getEnv("key1"));
+    LOG.info("Stop/destroy service {}", service);
+    client.actionStop(service.getName(), true);
+    client.actionDestroy(service.getName());
+  }
+
+  @Test(timeout = 200000)
+  public void testExpressUpgrade() throws Exception {
+    setupInternal(NUM_NMS);
+    getConf().setBoolean(YARN_SERVICE_UPGRADE_ENABLED, true);
+    ServiceClient client = createClient(getConf());
+
+    Service service = createExampleApplication();
+    client.actionCreate(service);
+    waitForServiceToBeStable(client, service);
+
+    // upgrade the service
+    Component component = service.getComponents().iterator().next();
+    service.setState(ServiceState.EXPRESS_UPGRADING);
+    service.setVersion("v2");
+    component.getConfiguration().getEnv().put("key1", "val1");
+    Component component2 = service.getComponent("compb");
+    component2.getConfiguration().getEnv().put("key2", "val2");
+    client.actionUpgradeExpress(service);
+
+    // wait for upgrade to complete
+    waitForServiceToBeStable(client, service);
+    Service active = client.getStatus(service.getName());
+    Assert.assertEquals("version mismatch", service.getVersion(),
+        active.getVersion());
+    Assert.assertEquals("component not stable", ComponentState.STABLE,
+        active.getComponent(component.getName()).getState());
+    Assert.assertEquals("compa does not have new env", "val1",
+        active.getComponent(component.getName()).getConfiguration()
+            .getEnv("key1"));
+    Assert.assertEquals("compb does not have new env", "val2",
+        active.getComponent(component2.getName()).getConfiguration()
+            .getEnv("key2"));
+    LOG.info("Stop/destroy service {}", service);
+    client.actionStop(service.getName(), true);
+    client.actionDestroy(service.getName());
+  }
+
+  @Test(timeout = 200000)
+  public void testCancelUpgrade() throws Exception {
+    setupInternal(NUM_NMS);
+    getConf().setBoolean(YARN_SERVICE_UPGRADE_ENABLED, true);
+    ServiceClient client = createClient(getConf());
+
+    Service service = createExampleApplication();
+    Component component = service.getComponents().iterator().next();
+    component.getConfiguration().getEnv().put("key1", "val0");
+
+    client.actionCreate(service);
+    waitForServiceToBeStable(client, service);
+
+    // upgrade the service
+    service.setState(ServiceState.UPGRADING);
+    service.setVersion("v2");
+    component.getConfiguration().getEnv().put("key1", "val1");
+    client.initiateUpgrade(service);
+
+    // wait for service to be in upgrade state
+    waitForServiceToBeInState(client, service, ServiceState.UPGRADING);
+
+    // upgrade 1 container
+    Service liveService = client.getStatus(service.getName());
+    Container container = liveService.getComponent(component.getName())
+        .getContainers().iterator().next();
+    client.actionUpgrade(service, Lists.newArrayList(container));
+
+    Thread.sleep(500);
+    // cancel the upgrade
+    client.actionCancelUpgrade(service.getName());
+    waitForServiceToBeStable(client, service);
+    Service active = client.getStatus(service.getName());
+    Assert.assertEquals("component not stable", ComponentState.STABLE,
+        active.getComponent(component.getName()).getState());
+    Assert.assertEquals("comp does not have new env", "val0",
+        active.getComponent(component.getName()).getConfiguration()
+            .getEnv("key1"));
+    LOG.info("Stop/destroy service {}", service);
+    client.actionStop(service.getName(), true);
+    client.actionDestroy(service.getName());
   }
 
   // Test to verify ANTI_AFFINITY placement policy
@@ -460,8 +563,37 @@ public class TestYarnNativeServices extends ServiceTestUtils {
       }
     }
 
-    // Flex compa up to 4, which is more containers than the no of NMs
+    // Flex compa up to 5, which is more containers than the no of NMs
     Map<String, Long> compCounts = new HashMap<>();
+    compCounts.put("compa", 5L);
+    exampleApp.getComponent("compa").setNumberOfContainers(5L);
+    client.flexByRestService(exampleApp.getName(), compCounts);
+    try {
+      // 10 secs is enough for the container to be started. The down side of
+      // this test is that it has to wait that long. Setting a higher wait time
+      // will add to the total time taken by tests to run.
+      waitForServiceToBeStable(client, exampleApp, 10000);
+      Assert.fail("Service should not be in a stable state. It should throw "
+          + "a timeout exception.");
+    } catch (Exception e) {
+      // Check that service state is not STABLE and only 3 containers are
+      // running and the fourth one should not get allocated.
+      service = client.getStatus(exampleApp.getName());
+      component = service.getComponent("compa");
+      Assert.assertNotEquals("Service state should not be STABLE",
+          ServiceState.STABLE, service.getState());
+      Assert.assertEquals("Component state should be FLEXING",
+          ComponentState.FLEXING, component.getState());
+      Assert.assertEquals("3 containers are expected to be running", 3,
+          component.getContainers().size());
+    }
+
+    // Flex compa down to 4 now, which is still more containers than the no of
+    // NMs. This tests the usecase that flex down does not kill any of the
+    // currently running containers since the required number of containers are
+    // still higher than the currently running number of containers. However,
+    // component state will still be FLEXING and service state not STABLE.
+    compCounts = new HashMap<>();
     compCounts.put("compa", 4L);
     exampleApp.getComponent("compa").setNumberOfContainers(4L);
     client.flexByRestService(exampleApp.getName(), compCounts);
@@ -484,6 +616,15 @@ public class TestYarnNativeServices extends ServiceTestUtils {
       Assert.assertEquals("3 containers are expected to be running", 3,
           component.getContainers().size());
     }
+
+    // Finally flex compa down to 3, which is exactly the number of containers
+    // currently running. This will bring the component and service states to
+    // STABLE.
+    compCounts = new HashMap<>();
+    compCounts.put("compa", 3L);
+    exampleApp.getComponent("compa").setNumberOfContainers(3L);
+    client.flexByRestService(exampleApp.getName(), compCounts);
+    waitForServiceToBeStable(client, exampleApp);
 
     LOG.info("Stop/destroy service {}", exampleApp);
     client.actionStop(exampleApp.getName(), true);
@@ -558,6 +699,109 @@ public class TestYarnNativeServices extends ServiceTestUtils {
     }
     Collections.sort(containerIds);
     return containerIds;
+  }
+
+  // Test to verify component health threshold monitor. It uses anti-affinity
+  // placement policy to make it easier to simulate container failure by
+  // allocating more containers than the no of NMs.
+  // 1. Start mini cluster with 3 NMs and scheduler placement-constraint handler
+  // 2. Create an example service of 3 containers with anti-affinity placement
+  //    policy and health threshold = 65%, window = 3 secs, init-delay = 0 secs,
+  //    poll-frequency = 1 secs
+  // 3. Flex the component to 4 containers. This makes health = 75%, so based on
+  //    threshold the service will continue to run beyond the window of 3 secs.
+  // 4. Flex the component to 5 containers. This makes health = 60%, so based on
+  //    threshold the service will be stopped after the window of 3 secs.
+  @Test (timeout = 200000)
+  public void testComponentHealthThresholdMonitor() throws Exception {
+    // We need to enable scheduler placement-constraint at the cluster level to
+    // let apps use placement policies.
+    YarnConfiguration conf = new YarnConfiguration();
+    conf.set(YarnConfiguration.RM_PLACEMENT_CONSTRAINTS_HANDLER,
+        YarnConfiguration.SCHEDULER_RM_PLACEMENT_CONSTRAINTS_HANDLER);
+    setConf(conf);
+    setupInternal(3);
+    ServiceClient client = createClient(getConf());
+    Service exampleApp = new Service();
+    exampleApp.setName("example-app");
+    exampleApp.setVersion("v1");
+    Component comp = createComponent("compa", 3L, "sleep 1000");
+    PlacementPolicy pp = new PlacementPolicy();
+    PlacementConstraint pc = new PlacementConstraint();
+    pc.setName("CA1");
+    pc.setTargetTags(Collections.singletonList("compa"));
+    pc.setScope(PlacementScope.NODE);
+    pc.setType(PlacementType.ANTI_AFFINITY);
+    pp.setConstraints(Collections.singletonList(pc));
+    comp.setPlacementPolicy(pp);
+    Configuration config = new Configuration();
+    config.setProperty(CONTAINER_HEALTH_THRESHOLD_PERCENT, "65");
+    config.setProperty(CONTAINER_HEALTH_THRESHOLD_WINDOW_SEC, "3");
+    config.setProperty(CONTAINER_HEALTH_THRESHOLD_INIT_DELAY_SEC, "0");
+    config.setProperty(CONTAINER_HEALTH_THRESHOLD_POLL_FREQUENCY_SEC, "1");
+    config.setProperty(DEFAULT_READINESS_CHECK_ENABLED, "false");
+    comp.setConfiguration(config);
+    exampleApp.addComponent(comp);
+    // Make sure AM does not come up after service is killed for this test
+    Configuration serviceConfig = new Configuration();
+    serviceConfig.setProperty(AM_RESTART_MAX, "1");
+    exampleApp.setConfiguration(serviceConfig);
+    client.actionCreate(exampleApp);
+    waitForServiceToBeStable(client, exampleApp);
+
+    // Check service is stable and all 3 containers are running
+    Service service = client.getStatus(exampleApp.getName());
+    Component component = service.getComponent("compa");
+    Assert.assertEquals("Service state should be STABLE", ServiceState.STABLE,
+        service.getState());
+    Assert.assertEquals("3 containers are expected to be running", 3,
+        component.getContainers().size());
+
+    // Flex compa up to 4 - will make health 75% (3 out of 4 running), but still
+    // above threshold of 65%, so service will continue to run.
+    Map<String, Long> compCounts = new HashMap<>();
+    compCounts.put("compa", 4L);
+    exampleApp.getComponent("compa").setNumberOfContainers(4L);
+    client.flexByRestService(exampleApp.getName(), compCounts);
+    try {
+      // Wait for 6 secs (window 3 secs + 1 for next poll + 2 for buffer). Since
+      // the service will never go to stable state (because of anti-affinity the
+      // 4th container will never be allocated) it will timeout. However, after
+      // the timeout the service should continue to run since health is 75%
+      // which is above the threshold of 65%.
+      waitForServiceToBeStable(client, exampleApp, 6000);
+      Assert.fail("Service should not be in a stable state. It should throw "
+          + "a timeout exception.");
+    } catch (Exception e) {
+      // Check that service state is STARTED and only 3 containers are running
+      service = client.getStatus(exampleApp.getName());
+      component = service.getComponent("compa");
+      Assert.assertEquals("Service state should be STARTED",
+          ServiceState.STARTED, service.getState());
+      Assert.assertEquals("Component state should be FLEXING",
+          ComponentState.FLEXING, component.getState());
+      Assert.assertEquals("3 containers are expected to be running", 3,
+          component.getContainers().size());
+    }
+
+    // Flex compa up to 5 - will make health 60% (3 out of 5 running), so
+    // service will stop since it is below threshold of 65%.
+    compCounts.put("compa", 5L);
+    exampleApp.getComponent("compa").setNumberOfContainers(5L);
+    client.flexByRestService(exampleApp.getName(), compCounts);
+    try {
+      // Wait for 14 secs (window 3 secs + 1 for next poll + 2 for buffer + 5
+      // secs of service wait before shutting down + 3 secs app cleanup so that
+      // API returns that service is in FAILED state). Note, because of
+      // anti-affinity the 4th and 5th container will never be allocated.
+      waitForServiceToBeInState(client, exampleApp, ServiceState.FAILED,
+          14000);
+    } catch (Exception e) {
+      Assert.fail("Should not have thrown exception");
+    }
+
+    LOG.info("Destroy service {}", exampleApp);
+    client.actionDestroy(exampleApp.getName());
   }
 
   // Check containers launched are in dependency order
@@ -640,132 +884,5 @@ public class TestYarnNativeServices extends ServiceTestUtils {
       Assert.assertEquals(component.getName() + "-" + i, s);
       i++;
     }
-  }
-
-  /**
-   * Wait until all the containers for all components become ready state.
-   *
-   * @param client
-   * @param exampleApp
-   * @return all ready containers of a service.
-   * @throws TimeoutException
-   * @throws InterruptedException
-   */
-  private Multimap<String, String> waitForAllCompToBeReady(ServiceClient client,
-      Service exampleApp) throws TimeoutException, InterruptedException {
-    int expectedTotalContainers = countTotalContainers(exampleApp);
-
-    Multimap<String, String> allContainers = HashMultimap.create();
-
-    GenericTestUtils.waitFor(() -> {
-      try {
-        Service retrievedApp = client.getStatus(exampleApp.getName());
-        int totalReadyContainers = 0;
-        allContainers.clear();
-        LOG.info("Num Components " + retrievedApp.getComponents().size());
-        for (Component component : retrievedApp.getComponents()) {
-          LOG.info("looking for  " + component.getName());
-          LOG.info(component.toString());
-          if (component.getContainers() != null) {
-            if (component.getContainers().size() == exampleApp
-                .getComponent(component.getName()).getNumberOfContainers()) {
-              for (Container container : component.getContainers()) {
-                LOG.info(
-                    "Container state " + container.getState() + ", component "
-                        + component.getName());
-                if (container.getState() == ContainerState.READY) {
-                  totalReadyContainers++;
-                  allContainers.put(component.getName(), container.getId());
-                  LOG.info("Found 1 ready container " + container.getId());
-                }
-              }
-            } else {
-              LOG.info(component.getName() + " Expected number of containers "
-                  + exampleApp.getComponent(component.getName())
-                  .getNumberOfContainers() + ", current = " + component
-                  .getContainers());
-            }
-          }
-        }
-        LOG.info("Exit loop, totalReadyContainers= " + totalReadyContainers
-            + " expected = " + expectedTotalContainers);
-        return totalReadyContainers == expectedTotalContainers;
-      } catch (Exception e) {
-        e.printStackTrace();
-        return false;
-      }
-    }, 2000, 200000);
-    return allContainers;
-  }
-
-  /**
-   * Wait until service state becomes stable. A service is stable when all
-   * requested containers of all components are running and in ready state.
-   *
-   * @param client
-   * @param exampleApp
-   * @throws TimeoutException
-   * @throws InterruptedException
-   */
-  private void waitForServiceToBeStable(ServiceClient client,
-      Service exampleApp) throws TimeoutException, InterruptedException {
-    waitForServiceToBeStable(client, exampleApp, 200000);
-  }
-
-  private void waitForServiceToBeStable(ServiceClient client,
-      Service exampleApp, int waitForMillis)
-      throws TimeoutException, InterruptedException {
-    waitForServiceToBeInState(client, exampleApp, ServiceState.STABLE,
-        waitForMillis);
-  }
-
-  /**
-   * Wait until service is started. It does not have to reach a stable state.
-   *
-   * @param client
-   * @param exampleApp
-   * @throws TimeoutException
-   * @throws InterruptedException
-   */
-  private void waitForServiceToBeStarted(ServiceClient client,
-      Service exampleApp) throws TimeoutException, InterruptedException {
-    waitForServiceToBeInState(client, exampleApp, ServiceState.STARTED);
-  }
-
-  private void waitForServiceToBeInState(ServiceClient client,
-      Service exampleApp, ServiceState desiredState) throws TimeoutException,
-      InterruptedException {
-    waitForServiceToBeInState(client, exampleApp, desiredState, 200000);
-  }
-
-  /**
-   * Wait until service is started. It does not have to reach a stable state.
-   *
-   * @param client
-   * @param exampleApp
-   * @throws TimeoutException
-   * @throws InterruptedException
-   */
-  private void waitForServiceToBeInState(ServiceClient client,
-      Service exampleApp, ServiceState desiredState, int waitForMillis) throws
-      TimeoutException, InterruptedException {
-    GenericTestUtils.waitFor(() -> {
-      try {
-        Service retrievedApp = client.getStatus(exampleApp.getName());
-        System.out.println(retrievedApp);
-        return retrievedApp.getState() == desiredState;
-      } catch (Exception e) {
-        e.printStackTrace();
-        return false;
-      }
-    }, 2000, waitForMillis);
-  }
-
-  private int countTotalContainers(Service service) {
-    int totalContainers = 0;
-    for (Component component : service.getComponents()) {
-      totalContainers += component.getNumberOfContainers();
-    }
-    return totalContainers;
   }
 }

@@ -1130,7 +1130,7 @@ Response Body:
 | type | string | Scheduler type - fairScheduler |
 | rootQueue | The root queue object | A collection of root queue resources |
 
-### Elements of the root queue object
+### Elements of all queue objects
 
 | Item | Data Type | Description |
 |:---- |:---- |:---- |
@@ -1142,17 +1142,23 @@ Response Body:
 | clusterResources | A single resource object | The capacity of the cluster |
 | queueName | string | The name of the queue |
 | schedulingPolicy | string | The name of the scheduling policy used by the queue |
-| childQueues | array of queues(JSON)/queue objects(XML) | A collection of sub-queue information. Omitted if the queue has no childQueues. |
+| childQueues | array of queues(JSON)/queue objects(XML) | A collection of sub-queue information. Omitted if the queue has no childQueues or is a leaf queue. |
+| allocatedContainers | int | The number of allocated containers |
+| demandResources | A single resource object | The resources that have been requested by containers in this queue which have not been fulfilled by the scheduler |
+| pendingContainers | int | The number of pending containers |
+| preemptable | boolean | true if containers in this queue can be preempted |
+| reservedContainers | int | The number of reserved containers |
+| steadyFairResources | A single resource object | The steady fair share for the queue |
 
-### Elements of the queues object for a Leaf queue - contains all the elements in parent except 'childQueues' plus the following
+### Additional elements of leaf queue objects (with the exception of the 'childQueues' property)
 
 | Item | Data Type | Description |
 |:---- |:---- |:---- |
-| type | string | type of the queue - fairSchedulerLeafQueueInfo |
+| type | string | The type of the queue - fairSchedulerLeafQueueInfo |
 | numActiveApps | int | The number of active applications in this queue |
 | numPendingApps | int | The number of pending applications in this queue |
 
-### Elements of the resource object for resourcesUsed in queues
+### Elements of the (cluster/demand/fair/max/min/used/*)Resources object in queues
 
 | Item | Data Type | Description |
 |:---- |:---- |:---- |
@@ -1181,12 +1187,18 @@ Response Body:
     "scheduler": {
         "schedulerInfo": {
             "rootQueue": {
+                "allocatedContainers": 0,
                 "childQueues": {
                     "queue": [
                         {
+                            "allocatedContainers": 0,
                             "clusterResources": {
                                 "memory": 8192,
                                 "vCores": 8
+                            },
+                            "demandResources": {
+                                "memory": 0,
+                                "vCores": 0
                             },
                             "fairResources": {
                                 "memory": 0,
@@ -1203,8 +1215,15 @@ Response Body:
                             },
                             "numActiveApps": 0,
                             "numPendingApps": 0,
+                            "pendingContainers": 0,
+                            "preemptable": true,
                             "queueName": "root.default",
+                            "reservedContainers": 0,
                             "schedulingPolicy": "fair",
+                            "steadyFairResources": {
+                                "memory": 4096,
+                                "vCores": 0
+                            },
                             "type": "fairSchedulerLeafQueueInfo",
                             "usedResources": {
                                 "memory": 0,
@@ -1212,12 +1231,18 @@ Response Body:
                             }
                         },
                         {
+                            "allocatedContainers": 0,
                             "childQueues": {
                                 "queue": [
                                     {
+                                        "allocatedContainers": 0,
                                         "clusterResources": {
                                             "memory": 8192,
-                                           "vCores": 8
+                                            "vCores": 8
+                                        },
+                                        "demandResources": {
+                                            "memory": 0,
+                                            "vCores": 0
                                         },
                                         "fairResources": {
                                             "memory": 10000,
@@ -1234,8 +1259,15 @@ Response Body:
                                         },
                                         "numActiveApps": 0,
                                         "numPendingApps": 0,
+                                        "pendingContainers": 0,
+                                        "preemptable": true,
                                         "queueName": "root.sample_queue.sample_sub_queue",
+                                        "reservedContainers": 0,
                                         "schedulingPolicy": "fair",
+                                        "steadyFairResources": {
+                                            "memory": 4096,
+                                            "vCores": 0
+                                        },
                                         "type": "fairSchedulerLeafQueueInfo",
                                         "usedResources": {
                                             "memory": 0,
@@ -1247,6 +1279,10 @@ Response Body:
                             "clusterResources": {
                                 "memory": 8192,
                                 "vCores": 8
+                            },
+                            "demandResources": {
+                                "memory": 0,
+                                "vCores": 0
                             },
                             "fairResources": {
                                 "memory": 10000,
@@ -1261,18 +1297,29 @@ Response Body:
                                 "memory": 10000,
                                 "vCores": 0
                             },
+                            "pendingContainers": 0,
+                            "preemptable": true,
                             "queueName": "root.sample_queue",
+                            "reservedContainers": 0,
                             "schedulingPolicy": "fair",
+                            "steadyFairResources": {
+                                "memory": 4096,
+                                "vCores": 0
+                            },
                             "usedResources": {
                                 "memory": 0,
                                 "vCores": 0
                             }
                         }
-                    ],
+                    ]
                 },
                 "clusterResources": {
                     "memory": 8192,
                     "vCores": 8
+                },
+                "demandResources": {
+                    "memory": 0,
+                    "vCores": 0
                 },
                 "fairResources": {
                     "memory": 8192,
@@ -1287,8 +1334,15 @@ Response Body:
                     "memory": 0,
                     "vCores": 0
                 },
+                "pendingContainers": 0,
+                "preemptable": true,
                 "queueName": "root",
+                "reservedContainers": 0,
                 "schedulingPolicy": "fair",
+                "steadyFairResources": {
+                    "memory": 8192,
+                    "vCores": 8
+                },
                 "usedResources": {
                     "memory": 0,
                     "vCores": 0
@@ -1334,6 +1388,14 @@ Response Body:
         <memory>0</memory>
         <vCores>0</vCores>
       </usedResources>
+      <demandResources>
+        <memory>0</memory>
+        <vCores>0</vCores>
+      </demandResources>
+      <steadyFairResources>
+        <memory>8192</memory>
+        <vCores>8</vCores>
+      </steadyFairResources>
       <fairResources>
         <memory>8192</memory>
         <vCores>8</vCores>
@@ -1342,8 +1404,12 @@ Response Body:
         <memory>8192</memory>
         <vCores>8</vCores>
       </clusterResources>
+      <pendingContainers>0</pendingContainers>
+      <allocatedContainers>0</allocatedContainers>
+      <reservedContainers>0</reservedContainers>
       <queueName>root</queueName>
       <schedulingPolicy>fair</schedulingPolicy>
+      <preemptable>true</preemptable>
       <childQueues>
         <queue xsi:type="fairSchedulerLeafQueueInfo">
           <maxApps>2147483647</maxApps>
@@ -1359,6 +1425,14 @@ Response Body:
             <memory>0</memory>
             <vCores>0</vCores>
           </usedResources>
+          <demandResources>
+            <memory>0</memory>
+            <vCores>0</vCores>
+          </demandResources>
+          <steadyFairResources>
+            <memory>4096</memory>
+            <vCores>0</vCores>
+          </steadyFairResources>
           <fairResources>
             <memory>0</memory>
             <vCores>0</vCores>
@@ -1367,15 +1441,19 @@ Response Body:
             <memory>8192</memory>
             <vCores>8</vCores>
           </clusterResources>
+          <pendingContainers>0</pendingContainers>
+          <allocatedContainers>0</allocatedContainers>
+          <reservedContainers>0</reservedContainers>
           <queueName>root.default</queueName>
           <schedulingPolicy>fair</schedulingPolicy>
+          <preemptable>true</preemptable>
           <numPendingApps>0</numPendingApps>
           <numActiveApps>0</numActiveApps>
         </queue>
         <queue>
           <maxApps>50</maxApps>
           <minResources>
-            <memory>10000</memory>
+            <memory>0</memory>
             <vCores>0</vCores>
           </minResources>
           <maxResources>
@@ -1386,6 +1464,14 @@ Response Body:
             <memory>0</memory>
             <vCores>0</vCores>
           </usedResources>
+          <demandResources>
+            <memory>0</memory>
+            <vCores>0</vCores>
+          </demandResources>
+          <steadyFairResources>
+            <memory>4096</memory>
+            <vCores>0</vCores>
+          </steadyFairResources>
           <fairResources>
             <memory>10000</memory>
             <vCores>0</vCores>
@@ -1394,8 +1480,12 @@ Response Body:
             <memory>8192</memory>
             <vCores>8</vCores>
           </clusterResources>
+          <pendingContainers>0</pendingContainers>
+          <allocatedContainers>0</allocatedContainers>
+          <reservedContainers>0</reservedContainers>
           <queueName>root.sample_queue</queueName>
           <schedulingPolicy>fair</schedulingPolicy>
+          <preemptable>true</preemptable>
           <childQueues>
             <queue xsi:type="fairSchedulerLeafQueueInfo">
               <maxApps>2147483647</maxApps>
@@ -1411,6 +1501,14 @@ Response Body:
                 <memory>0</memory>
                 <vCores>0</vCores>
               </usedResources>
+              <demandResources>
+                <memory>0</memory>
+                <vCores>0</vCores>
+              </demandResources>
+              <steadyFairResources>
+                <memory>4096</memory>
+                <vCores>0</vCores>
+              </steadyFairResources>
               <fairResources>
                 <memory>10000</memory>
                 <vCores>0</vCores>
@@ -1419,8 +1517,12 @@ Response Body:
                 <memory>8192</memory>
                 <vCores>8</vCores>
               </clusterResources>
+              <pendingContainers>0</pendingContainers>
+              <allocatedContainers>0</allocatedContainers>
+              <reservedContainers>0</reservedContainers>
               <queueName>root.sample_queue.sample_sub_queue</queueName>
               <schedulingPolicy>fair</schedulingPolicy>
+              <preemptable>true</preemptable>
               <numPendingApps>0</numPendingApps>
               <numActiveApps>0</numActiveApps>
             </queue>
@@ -2222,6 +2324,291 @@ Response Body:
     <logsLink>http://host.domain.com:8042/node/containerlogs/container_1326821518301_0005_01_000001/user1</logsLink>
   </appAttempt>
 </appAttempts>
+```
+
+Containers for an Application Attempt API
+-----------------------------------------
+
+With Containers for an Application Attempt API you can obtain the list of containers, which belongs to an Application Attempt.
+
+### URI
+
+      * http://rm-http-address:port/ws/v1/cluster/apps/{appid}/appattempts/{appAttemptId}/containers
+
+### HTTP Operations Supported
+
+      * GET
+
+### Query Parameters Supported
+
+      None
+
+### Elements of the *containers* object
+
+When you make a request for the list of containers, the information will be returned as an array of container objects.
+
+containers:
+
+| Item | Data Type | Description |
+|:---- |:---- |:---- |
+| containers | array of app container objects(JSON)/zero or more container objects(XML) | The collection of app container objects |
+
+### Elements of the *container* object
+
+| Item | Data Type | Description |
+|:---- |:---- |:---- |
+| containerId | string | The container id |
+| allocatedMB | long | The amount of memory allocated for the container in MB |
+| allocatedVCores | int | The amount of virtual cores allocated for the container |
+| assignedNodeId | string | The node id of the node the attempt ran on |
+| priority | int | Allocated priority of the container |
+| startedTime | long | The start time of the attempt (in ms since epoch) |
+| finishedTime | long | The finish time of the attempt (in ms since epoch) 0 if not finished |
+| elapsedTime | long | The elapsed time in ms since the startedTime |
+| logUrl | string | The web URL that can be used to check the log for the container |
+| containerExitStatus | int | Final exit status of the container |
+| containerState | string | State of the container, can be NEW, RUNNING, or COMPLETE |
+| nodeHttpAddress | string | The node http address of the node the attempt ran on ||
+| nodeId | string | The node id of the node the attempt ran on |
+| allocatedResources |array of resource(JSON)/zero or more resource objects(XML) | Allocated resources for the container |
+
+### Elements of the *resource* object
+| Item | Data Type | Description |
+|:---- |:---- |:---- |
+| memory | int | The maximum memory for the container |
+| vCores | int | The maximum number of vcores for the container |
+
+**JSON response**
+
+HTTP Request:
+
+      GET http://rm-http-address:port/ws/v1/cluster/apps/{appid}/appattempts/{appAttemptId}/containers
+
+Response Header:
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+      Transfer-Encoding: chunked
+      Server: Jetty(6.1.26)
+
+Response Body:
+
+```json
+{
+  "containers" : {
+    "container": [
+      {
+      "containerId": "container_1531404209605_0008_01_000001",
+      "allocatedMB": "1536",
+      "allocatedVCores": "1",
+      "assignedNodeId": "host.domain.com:37814",
+      "priority": "0",
+      "startedTime": "1531405909444",
+      "finishedTime": "0",
+      "elapsedTime": "4112",
+      "logUrl": "http://host.domain.com:8042/node/containerlogs/container_1531404209605_0008_01_000001/systest",
+      "containerExitStatus": "0",
+      "containerState": "RUNNING",
+      "nodeHttpAddress": "http://host.domain.com:8042",
+      "nodeId": "host.domain.com:37814",
+      "allocatedResources": [
+         {
+            "key": "memory-mb",
+            "value": "1536"
+         },
+         {
+            "key": "vcores",
+            "value": "1"
+         }
+       ]
+      }
+    ]
+  }
+}
+```
+
+**XML response**
+
+HTTP Request:
+
+      GET http://rm-http-address:port/ws/v1/cluster/apps/{appid}/appattempts/{appAttemptId}/containers
+      Accept: application/xml
+
+Response Header:
+
+      HTTP/1.1 200 OK
+      Content-Type: application/xml
+      Content-Length: 1104
+      Server: Jetty(6.1.26)
+
+Response Body:
+
+```xml
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<containers>
+  <container>
+    <containerId>container_1531404209605_0008_01_000001</containerId>
+    <allocatedMB>1536</allocatedMB>
+    <allocatedVCores>1</allocatedVCores>
+    <assignedNodeId>host.domain.com:37814</assignedNodeId>
+    <priority>0</priority>
+    <startedTime>1531405909444</startedTime>
+    <finishedTime>0</finishedTime>
+    <elapsedTime>4112</elapsedTime>
+    <logUrl>
+    http://host.domain.com:8042/node/containerlogs/container_1531404209605_0008_01_000001/systest
+    </logUrl>
+    <containerExitStatus>0</containerExitStatus>
+    <containerState>RUNNING</containerState>
+    <nodeHttpAddress>http://host.domain.com:8042</nodeHttpAddress>
+    <nodeId>host.domain.com:37814</nodeId>
+    <allocatedResources>
+      <entry>
+        <key>memory-mb</key>
+        <value>1536</value>
+      </entry>
+      <entry>
+        <key>vcores</key>
+        <value>1</value>
+      </entry>
+    </allocatedResources>
+  </container>
+</containers>
+```
+
+Specific Container for an Application Attempt API
+-------------------------------------------------
+
+With Specific Container for an Application Attempt API you can obtain information about a specific container, which belongs to an Application Attempt and selected by the container id.
+
+### URI
+
+      * http://rm-http-address:port/ws/v1/cluster/apps/{appid}/appattempts/{appAttemptId}/containers/{containerId}
+
+### HTTP Operations Supported
+
+      * GET
+
+### Query Parameters Supported
+
+      None
+
+### Elements of the *container* object
+
+| Item | Data Type | Description |
+|:---- |:---- |:---- |
+| containerId | string | The container id |
+| allocatedMB | long | The amount of memory allocated for the container in MB |
+| allocatedVCores | int | The amount of virtual cores allocated for the container |
+| assignedNodeId | string | The node id of the node the attempt ran on |
+| priority | int | Allocated priority of the container |
+| startedTime | long | The start time of the attempt (in ms since epoch) |
+| finishedTime | long | The finish time of the attempt (in ms since epoch) 0 if not finished |
+| elapsedTime | long | The elapsed time in ms since the startedTime |
+| logUrl | string | The web URL that can be used to check the log for the container |
+| containerExitStatus | int | Final exit status of the container |
+| containerState | string | State of the container, can be NEW, RUNNING, or COMPLETE |
+| nodeHttpAddress | string | The node http address of the node the attempt ran on ||
+| nodeId | string | The node id of the node the attempt ran on |
+| allocatedResources |array of resource(JSON)/zero or more resource objects(XML) | Allocated resources for the container |
+
+### Elements of the *resource* object
+| Item | Data Type | Description |
+|:---- |:---- |:---- |
+| memory | int | The maximum memory for the container |
+| vCores | int | The maximum number of vcores for the container |
+
+**JSON response**
+
+HTTP Request:
+
+      GET http://rm-http-address:port/ws/v1/cluster/apps/{appid}/appattempts/{appAttemptId}/containers/{containerId}
+
+Response Header:
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+      Transfer-Encoding: chunked
+      Server: Jetty(6.1.26)
+
+Response Body:
+
+```json
+{
+  "container": {
+    "containerId": "container_1531404209605_0008_01_000001",
+    "allocatedMB": "1536",
+    "allocatedVCores": "1",
+    "assignedNodeId": "host.domain.com:37814",
+    "priority": "0",
+    "startedTime": "1531405909444",
+    "finishedTime": "0",
+    "elapsedTime": "4112",
+    "logUrl": "http://host.domain.com:8042/node/containerlogs/container_1531404209605_0008_01_000001/systest",
+    "containerExitStatus": "0",
+    "containerState": "RUNNING",
+    "nodeHttpAddress": "http://host.domain.com:8042",
+    "nodeId": "host.domain.com:37814",
+    "allocatedResources": [
+       {
+          "key": "memory-mb",
+          "value": "1536"
+       },
+       {
+          "key": "vcores",
+          "value": "1"
+       }
+    ]
+  }
+}
+```
+
+**XML response**
+
+HTTP Request:
+
+      GET http://rm-http-address:port/ws/v1/cluster/apps/{appid}/appattempts/{appAttemptId}/containers/{containerId}
+      Accept: application/xml
+
+Response Header:
+
+      HTTP/1.1 200 OK
+      Content-Type: application/xml
+      Content-Length: 1104
+      Server: Jetty(6.1.26)
+
+Response Body:
+
+```xml
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+
+<container>
+  <containerId>container_1531404209605_0008_01_000001</containerId>
+  <allocatedMB>1536</allocatedMB>
+  <allocatedVCores>1</allocatedVCores>
+  <assignedNodeId>host.domain.com:37814</assignedNodeId>
+  <priority>0</priority>
+  <startedTime>1531405909444</startedTime>
+  <finishedTime>0</finishedTime>
+  <elapsedTime>4112</elapsedTime>
+  <logUrl>
+  http://host.domain.com:8042/node/containerlogs/container_1531404209605_0008_01_000001/systest
+  </logUrl>
+  <containerExitStatus>0</containerExitStatus>
+  <containerState>RUNNING</containerState>
+  <nodeHttpAddress>http://host.domain.com:8042</nodeHttpAddress>
+  <nodeId>host.domain.com:37814</nodeId>
+  <allocatedResources>
+    <entry>
+      <key>memory-mb</key>
+      <value>1536</value>
+    </entry>
+    <entry>
+      <key>vcores</key>
+      <value>1</value>
+    </entry>
+  </allocatedResources>
+</container>
 ```
 
 Cluster Nodes API
@@ -4577,6 +4964,7 @@ Please note that this feature is currently in the alpha stage and is subject to 
 
 ### HTTP Operations Supported
 
+      * GET
       * PUT
 
 ### Elements of the *sched-conf* object
@@ -4587,6 +4975,45 @@ Please note that this feature is currently in the alpha stage and is subject to 
 | add-queue | object | A queue to add to the scheduler along with this queue's configurations |
 | remove-queue | string | Full path name of a queue to remove |
 | global-updates | map | Map of key value pairs to update scheduler's global configuration |
+
+### GET Request Examples
+
+Get requests are used to retrieve the scheduler's configuration that is currently loaded into scheduler's context.
+
+**XML response**
+
+HTTP Request:
+
+      Accept: application/xml
+      Content-Type: application/xml
+      GET http://rm-http-address:port/ws/v1/cluster/scheduler-conf
+
+Response Header:
+
+      TTP/1.1 200 OK
+      Content-Type: application/xml; charset=utf-8
+      Transfer-Encoding: chunked
+
+Response Body:
+
+
+```xml
+      <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      <configuration>
+        <property>
+          <name>yarn.scheduler.capacity.root.queues</name>
+          <value>default</value>
+        </property>
+        <property>
+          <name>yarn.scheduler.capacity.maximum-applications</name>
+          <value>10000</value>
+        </property>
+        <property>
+          <name>yarn.scheduler.capacity.root.default.capacity</name>
+          <value>100</value>
+        </property>
+      </configuration>
+```
 
 ### PUT Request Examples
 

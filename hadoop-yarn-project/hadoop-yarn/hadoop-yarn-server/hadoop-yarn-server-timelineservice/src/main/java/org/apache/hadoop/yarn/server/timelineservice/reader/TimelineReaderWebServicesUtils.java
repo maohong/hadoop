@@ -24,7 +24,7 @@ import java.util.EnumSet;
 import javax.servlet.http.HttpServletRequest;
 
 import org.apache.commons.io.IOUtils;
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.yarn.server.timelineservice.reader.filter.TimelineFilterList;
 import org.apache.hadoop.yarn.server.timelineservice.storage.TimelineReader.Field;
@@ -214,7 +214,11 @@ public final class TimelineReaderWebServicesUtils {
     String[] strs = str.split(delimiter);
     EnumSet<Field> fieldList = EnumSet.noneOf(Field.class);
     for (String s : strs) {
-      fieldList.add(Field.valueOf(s.trim().toUpperCase()));
+      try {
+        fieldList.add(Field.valueOf(s.trim().toUpperCase()));
+      } catch (IllegalArgumentException e) {
+        throw new IllegalArgumentException(s + " is not a valid field.");
+      }
     }
     return fieldList;
   }

@@ -22,11 +22,11 @@
   <parent>
     <artifactId>hadoop-yarn-server</artifactId>
     <groupId>org.apache.hadoop</groupId>
-    <version>3.2.0-SNAPSHOT</version>
+    <version>3.3.0-SNAPSHOT</version>
   </parent>
   <modelVersion>4.0.0</modelVersion>
   <artifactId>hadoop-yarn-server-timelineservice-hbase-tests</artifactId>
-  <version>3.2.0-SNAPSHOT</version>
+  <version>3.3.0-SNAPSHOT</version>
   <name>Apache Hadoop YARN TimelineService HBase tests</name>
 
   <properties>
@@ -132,6 +132,10 @@
         <exclusion>
           <groupId>org.apache.hadoop</groupId>
           <artifactId>hadoop-auth</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-hdfs-client</artifactId>
         </exclusion>
       </exclusions>
     </dependency>
@@ -353,6 +357,12 @@
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-webapp</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.apache.commons</groupId>
+      <artifactId>commons-lang3</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>

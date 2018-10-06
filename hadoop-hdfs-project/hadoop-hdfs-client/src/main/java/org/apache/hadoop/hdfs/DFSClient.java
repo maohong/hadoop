@@ -131,6 +131,7 @@ import org.apache.hadoop.hdfs.protocol.LastBlockWithStatus;
 import org.apache.hadoop.hdfs.protocol.LocatedBlock;
 import org.apache.hadoop.hdfs.protocol.LocatedBlocks;
 import org.apache.hadoop.hdfs.protocol.NSQuotaExceededException;
+import org.apache.hadoop.hdfs.protocol.NoECPolicySetException;
 import org.apache.hadoop.hdfs.protocol.OpenFileEntry;
 import org.apache.hadoop.hdfs.protocol.OpenFilesIterator;
 import org.apache.hadoop.hdfs.protocol.OpenFilesIterator.OpenFilesType;
@@ -953,8 +954,12 @@ public class DFSClient implements java.io.Closeable, RemotePeerFactory,
       final CryptoCodec codec = HdfsKMSUtil.getCryptoCodec(conf, feInfo);
       KeyVersion decrypted;
       try (TraceScope ignored = tracer.newScope("decryptEDEK")) {
+        LOG.debug("Start decrypting EDEK for file: {}, output stream: 0x{}",
+            dfsos.getSrc(), Integer.toHexString(dfsos.hashCode()));
         decrypted = HdfsKMSUtil.decryptEncryptedDataEncryptionKey(feInfo,
           getKeyProvider());
+        LOG.debug("Decrypted EDEK for file: {}, output stream: 0x{}",
+            dfsos.getSrc(), Integer.toHexString(dfsos.hashCode()));
       }
       final CryptoOutputStream cryptoOut =
           new CryptoOutputStream(dfsos, codec,
@@ -1049,8 +1054,8 @@ public class DFSClient implements java.io.Closeable, RemotePeerFactory,
 
   /**
    * Call {@link #create(String, boolean, short, long, Progressable)} with
-   * default <code>replication</code> and <code>blockSize<code> and null <code>
-   * progress</code>.
+   * default <code>replication</code> and <code>blockSize</code> and null
+   * <code>progress</code>.
    */
   public OutputStream create(String src, boolean overwrite)
       throws IOException {
@@ -1060,7 +1065,7 @@ public class DFSClient implements java.io.Closeable, RemotePeerFactory,
 
   /**
    * Call {@link #create(String, boolean, short, long, Progressable)} with
-   * default <code>replication</code> and <code>blockSize<code>.
+   * default <code>replication</code> and <code>blockSize</code>.
    */
   public OutputStream create(String src,
       boolean overwrite, Progressable progress) throws IOException {
@@ -1868,7 +1873,7 @@ public class DFSClient implements java.io.Closeable, RemotePeerFactory,
       return PBHelperClient.convert(
           reply.getReadOpChecksumInfo().getChecksum().getType());
     } finally {
-      IOUtilsClient.cleanup(null, pair.in, pair.out);
+      IOUtilsClient.cleanupWithLogger(LOG, pair.in, pair.out);
     }
   }
 
@@ -2153,6 +2158,10 @@ public class DFSClient implements java.io.Closeable, RemotePeerFactory,
       String fromSnapshot, String toSnapshot) throws IOException {
     checkOpen();
     try (TraceScope ignored = tracer.newScope("getSnapshotDiffReport")) {
+      Preconditions.checkArgument(fromSnapshot != null,
+          "null fromSnapshot");
+      Preconditions.checkArgument(toSnapshot != null,
+          "null toSnapshot");
       return namenode
           .getSnapshotDiffReport(snapshotDir, fromSnapshot, toSnapshot);
     } catch (RemoteException re) {
@@ -2338,6 +2347,16 @@ public class DFSClient implements java.io.Closeable, RemotePeerFactory,
     checkOpen();
     try (TraceScope ignored = tracer.newScope("finalizeUpgrade")) {
       namenode.finalizeUpgrade();
+    }
+  }
+
+  /**
+   * @see ClientProtocol#upgradeStatus()
+   */
+  public boolean upgradeStatus() throws IOException {
+    checkOpen();
+    try (TraceScope ignored = tracer.newScope("isUpgradeFinalized")) {
+      return namenode.upgradeStatus();
     }
   }
 
@@ -2736,7 +2755,7 @@ public class DFSClient implements java.io.Closeable, RemotePeerFactory,
       throw re.unwrapRemoteException(AccessControlException.class,
           SafeModeException.class,
           UnresolvedPathException.class,
-          FileNotFoundException.class);
+          FileNotFoundException.class, NoECPolicySetException.class);
     }
   }
 
@@ -2919,7 +2938,7 @@ public class DFSClient implements java.io.Closeable, RemotePeerFactory,
       return peer;
     } finally {
       if (!success) {
-        IOUtilsClient.cleanup(LOG, peer);
+        IOUtilsClient.cleanupWithLogger(LOG, peer);
         IOUtils.closeSocket(sock);
       }
     }
@@ -2929,6 +2948,12 @@ public class DFSClient implements java.io.Closeable, RemotePeerFactory,
     if (stats != null) {
       stats.incrementBytesRead(nRead);
       stats.incrementBytesReadByDistance(distance, nRead);
+    }
+  }
+
+  void updateFileSystemECReadStats(int nRead) {
+    if (stats != null) {
+      stats.incrementBytesReadErasureCoded(nRead);
     }
   }
 
@@ -3055,25 +3080,6 @@ public class DFSClient implements java.io.Closeable, RemotePeerFactory,
   }
 
   /**
-   * Full detailed tracing for read requests: path, position in the file,
-   * and length.
-   *
-   * @param reqLen requested length
-   */
-  TraceScope newReaderTraceScope(String description, String path, long pos,
-      int reqLen) {
-    TraceScope scope = newPathTraceScope(description, path);
-    scope.addKVAnnotation("pos", Long.toString(pos));
-    scope.addKVAnnotation("reqLen", Integer.toString(reqLen));
-    return scope;
-  }
-
-  /** Add the returned length info to the scope. */
-  void addRetLenToReaderScope(TraceScope scope, int retLen) {
-    scope.addKVAnnotation("retLen", Integer.toString(retLen));
-  }
-
-  /**
    * Get the erasure coding policy information for the specified path
    *
    * @param src path to get the information for
@@ -3082,7 +3088,6 @@ public class DFSClient implements java.io.Closeable, RemotePeerFactory,
    * has REPLICATION policy.
    * @throws IOException
    */
-
   public ErasureCodingPolicy getErasureCodingPolicy(String src)
       throws IOException {
     checkOpen();
@@ -3092,6 +3097,24 @@ public class DFSClient implements java.io.Closeable, RemotePeerFactory,
     } catch (RemoteException re) {
       throw re.unwrapRemoteException(FileNotFoundException.class,
           AccessControlException.class, UnresolvedPathException.class);
+    }
+  }
+
+  /**
+   * Satisfy storage policy for an existing file/directory.
+   * @param src file/directory name
+   * @throws IOException
+   */
+  public void satisfyStoragePolicy(String src) throws IOException {
+    checkOpen();
+    try (TraceScope ignored =
+        newPathTraceScope("satisfyStoragePolicy", src)) {
+      namenode.satisfyStoragePolicy(src);
+    } catch (RemoteException re) {
+      throw re.unwrapRemoteException(AccessControlException.class,
+          FileNotFoundException.class,
+          SafeModeException.class,
+          UnresolvedPathException.class);
     }
   }
 

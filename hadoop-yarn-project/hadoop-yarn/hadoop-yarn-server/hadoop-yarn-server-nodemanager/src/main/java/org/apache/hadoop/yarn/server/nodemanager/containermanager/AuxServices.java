@@ -230,15 +230,30 @@ public class AuxServices extends AbstractService
               }
             }
             if (reDownload) {
+              LocalResourceType srcType = null;
+              String lowerDst = StringUtils.toLowerCase(src.toString());
+              if (lowerDst.endsWith(".jar")) {
+                srcType = LocalResourceType.FILE;
+              } else if (lowerDst.endsWith(".zip") ||
+                  lowerDst.endsWith(".tar.gz") || lowerDst.endsWith(".tgz")
+                  || lowerDst.endsWith(".tar")) {
+                srcType = LocalResourceType.ARCHIVE;
+              } else {
+                throw new YarnRuntimeException(
+                    "Can not unpack file from remote-file-path:" + src
+                        + "for aux-service:" + ".\n");
+              }
               LocalResource scRsrc = LocalResource.newInstance(
                   URL.fromURI(src.toUri()),
-                  LocalResourceType.ARCHIVE, LocalResourceVisibility.PRIVATE,
+                  srcType, LocalResourceVisibility.PRIVATE,
                   scFileStatus.getLen(), scFileStatus.getModificationTime());
               FSDownload download = new FSDownload(localLFS, null, conf,
                   downloadDest, scRsrc, null);
               try {
                 Path downloaded = download.call();
-                dest = new Path(downloaded + Path.SEPARATOR + "*");
+                // don't need to convert downloaded path into a dir
+                // since its already a jar path.
+                dest = downloaded;
               } catch (Exception ex) {
                 throw new YarnRuntimeException(
                     "Exception happend while downloading files "
@@ -247,7 +262,7 @@ public class AuxServices extends AbstractService
               }
             }
             s = AuxiliaryServiceWithCustomClassLoader.getInstance(
-                conf, className, dest.toString());
+                new Configuration(conf), className, dest.toString());
           }
           LOG.info("The aux service:" + sName
               + " are using the custom classloader");
@@ -258,7 +273,7 @@ public class AuxServices extends AbstractService
           if (sClass == null) {
             throw new RuntimeException("No class defined for " + sName);
           }
-          s = ReflectionUtils.newInstance(sClass, conf);
+          s = ReflectionUtils.newInstance(sClass, new Configuration(conf));
         }
         if (s == null) {
           throw new RuntimeException("No object created for " + sName);
@@ -279,7 +294,7 @@ public class AuxServices extends AbstractService
           stateStoreFs.mkdirs(storePath, storeDirPerms);
           s.setRecoveryPath(storePath);
         }
-        s.init(conf);
+        s.init(new Configuration(conf));
       } catch (RuntimeException e) {
         LOG.error("Failed to initialize " + sName, e);
         throw e;

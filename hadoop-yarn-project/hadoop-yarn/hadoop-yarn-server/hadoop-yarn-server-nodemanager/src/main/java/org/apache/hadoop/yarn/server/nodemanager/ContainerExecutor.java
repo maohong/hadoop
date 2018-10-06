@@ -24,8 +24,10 @@ import java.io.OutputStream;
 import java.io.PrintStream;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -34,6 +36,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock.ReadLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock.WriteLock;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -50,6 +53,7 @@ import org.apache.hadoop.yarn.exceptions.ConfigurationException;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.container.Container;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.container.ContainerDiagnosticsUpdateEvent;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.launcher.ContainerLaunch;
+import org.apache.hadoop.yarn.server.nodemanager.containermanager.launcher.ContainerLaunch.ShellScriptBuilder;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.runtime.ContainerExecutionException;
 import org.apache.hadoop.yarn.server.nodemanager.executor.ContainerPrepareContext;
 import org.apache.hadoop.yarn.server.nodemanager.util.NodeManagerHardwareUtils;
@@ -85,7 +89,7 @@ public abstract class ContainerExecutor implements Configurable {
   /**
    * The relative path to which debug information will be written.
    *
-   * @see ContainerLaunch.ShellScriptBuilder#listDebugInformation
+   * @see ShellScriptBuilder#listDebugInformation
    */
   public static final String DIRECTORY_CONTENTS = "directory.info";
 
@@ -309,7 +313,8 @@ public abstract class ContainerExecutor implements Configurable {
     }
 
     try {
-      return Integer.parseInt(FileUtils.readFileToString(file).trim());
+      return Integer.parseInt(
+          FileUtils.readFileToString(file, Charset.defaultCharset()).trim());
     } catch (NumberFormatException e) {
       throw new IOException("Error parsing exit code from pid " + pid, e);
     }
@@ -415,20 +420,9 @@ public abstract class ContainerExecutor implements Configurable {
 
     if (resources != null) {
       sb.echo("Setting up job resources");
-      for (Map.Entry<Path, List<String>> resourceEntry :
-          resources.entrySet()) {
-        for (String linkName : resourceEntry.getValue()) {
-          if (new Path(linkName).getName().equals(WILDCARD)) {
-            // If this is a wildcarded path, link to everything in the
-            // directory from the working directory
-            for (File wildLink : readDirAsUser(user, resourceEntry.getKey())) {
-              sb.symlink(new Path(wildLink.toString()),
-                  new Path(wildLink.getName()));
-            }
-          } else {
-            sb.symlink(resourceEntry.getKey(), new Path(linkName));
-          }
-        }
+      Map<Path, Path> symLinks = resolveSymLinks(resources, user);
+      for (Map.Entry<Path, Path> symLink : symLinks.entrySet()) {
+        sb.symlink(symLink.getKey(), symLink.getValue());
       }
     }
 
@@ -790,6 +784,28 @@ public abstract class ContainerExecutor implements Configurable {
   }
 
   /**
+   * Perform any cleanup before the next launch of the container.
+   * @param container         container
+   */
+  public void cleanupBeforeRelaunch(Container container)
+      throws IOException, InterruptedException {
+    if (container.getLocalizedResources() != null) {
+
+      Map<Path, Path> symLinks = resolveSymLinks(
+          container.getLocalizedResources(), container.getUser());
+
+      for (Map.Entry<Path, Path> symLink : symLinks.entrySet()) {
+        LOG.debug("{} deleting {}", container.getContainerId(),
+            symLink.getValue());
+        deleteAsUser(new DeletionAsUserContext.Builder()
+            .setUser(container.getUser())
+            .setSubDir(symLink.getValue())
+            .build());
+      }
+    }
+  }
+
+  /**
    * Get the process-identifier for the container.
    *
    * @param containerID the container ID
@@ -867,5 +883,26 @@ public abstract class ContainerExecutor implements Configurable {
             container.getContainerId(), message));
       }
     }
+  }
+
+  private Map<Path, Path> resolveSymLinks(Map<Path,
+      List<String>> resources, String user) {
+    Map<Path, Path> symLinks = new HashMap<>();
+    for (Map.Entry<Path, List<String>> resourceEntry :
+        resources.entrySet()) {
+      for (String linkName : resourceEntry.getValue()) {
+        if (new Path(linkName).getName().equals(WILDCARD)) {
+          // If this is a wildcarded path, link to everything in the
+          // directory from the working directory
+          for (File wildLink : readDirAsUser(user, resourceEntry.getKey())) {
+            symLinks.put(new Path(wildLink.toString()),
+                new Path(wildLink.getName()));
+          }
+        } else {
+          symLinks.put(resourceEntry.getKey(), new Path(linkName));
+        }
+      }
+    }
+    return symLinks;
   }
 }

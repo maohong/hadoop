@@ -18,11 +18,11 @@
   <parent>
     <groupId>org.apache.hadoop</groupId>
     <artifactId>hadoop-project</artifactId>
-    <version>3.2.0-SNAPSHOT</version>
+    <version>3.3.0-SNAPSHOT</version>
     <relativePath>../../hadoop-project</relativePath>
   </parent>
   <artifactId>hadoop-client-minicluster</artifactId>
-  <version>3.2.0-SNAPSHOT</version>
+  <version>3.3.0-SNAPSHOT</version>
   <packaging>jar</packaging>
 
   <description>Apache Hadoop Minicluster for Clients</description>
@@ -83,13 +83,6 @@
       <artifactId>hadoop-minicluster</artifactId>
       <optional>true</optional>
       <exclusions>
-        <!-- Exclude the in-development timeline service and
-             add it as an optional runtime dependency
-          -->
-        <exclusion>
-          <groupId>org.apache.hadoop</groupId>
-          <artifactId>hadoop-yarn-server-timelineservice</artifactId>
-        </exclusion>
         <!-- exclude everything that comes in via the shaded runtime and api  TODO remove once we have a filter for "is in these artifacts" -->
         <!-- Skip jersey, since we need it again here. -->
         <exclusion>
@@ -150,14 +143,6 @@
           <artifactId>hadoop-yarn-common</artifactId>
         </exclusion>
         <exclusion>
-          <groupId>org.apache.hadoop</groupId>
-          <artifactId>hadoop-yarn-server-common</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>org.apache.zookeeper</groupId>
-          <artifactId>zookeeper</artifactId>
-        </exclusion>
-        <exclusion>
           <groupId>org.fusesource.leveldbjni</groupId>
           <artifactId>leveldbjni-all</artifactId>
         </exclusion>
@@ -182,8 +167,12 @@
           <artifactId>commons-io</artifactId>
         </exclusion>
         <exclusion>
-          <groupId>commons-lang</groupId>
-          <artifactId>commons-lang</artifactId>
+          <groupId>org.apache.commons</groupId>
+          <artifactId>commons-lang3</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.commons</groupId>
+          <artifactId>commons-text</artifactId>
         </exclusion>
         <exclusion>
           <groupId>commons-logging</groupId>
@@ -224,6 +213,114 @@
         <exclusion>
           <groupId>javax.servlet</groupId>
           <artifactId>javax.servlet-api</artifactId>
+        </exclusion>
+
+        <!-- removing dependency jars from yarn-server-common, which are
+        already included in hadoop-client-runtime and hadoop-client-api
+         -->
+        <exclusion>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-auth</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.httpcomponents</groupId>
+          <artifactId>httpclient</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.httpcomponents</groupId>
+          <artifactId>httpcore</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>com.nimbusds</groupId>
+          <artifactId>nimbus-jose-jwt</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>net.minidev</groupId>
+          <artifactId>json-smart</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>net.minidev</groupId>
+          <artifactId>accessors-smart</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.kerby</groupId>
+          <artifactId>kerb-simplekdc</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.kerby</groupId>
+          <artifactId>kerb-util</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.kerby</groupId>
+          <artifactId>token-provider</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.kerby</groupId>
+          <artifactId>kerb-common</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.kerby</groupId>
+          <artifactId>kerb-crypto</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.kerby</groupId>
+          <artifactId>kerby-util</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.kerby</groupId>
+          <artifactId>kerb-common</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.kerby</groupId>
+          <artifactId>kerby-pkix</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.kerby</groupId>
+          <artifactId>kerby-asn1</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.kerby</groupId>
+          <artifactId>kerb-core</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.kerby</groupId>
+          <artifactId>kerby-config</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.kerby</groupId>
+          <artifactId>kerby-xdr</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.kerby</groupId>
+          <artifactId>kerb-identity</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.kerby</groupId>
+          <artifactId>kerb-server</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.kerby</groupId>
+          <artifactId>kerb-identity</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.kerby</groupId>
+          <artifactId>kerb-admin</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.curator</groupId>
+          <artifactId>curator-framework</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.curator</groupId>
+          <artifactId>curator-recipes</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>commons-net</groupId>
+          <artifactId>commons-net</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>dnsjava</groupId>
+          <artifactId>dnsjava</artifactId>
         </exclusion>
       </exclusions>
     </dependency>
@@ -407,8 +504,8 @@
           <artifactId>commons-codec</artifactId>
         </exclusion>
         <exclusion>
-          <groupId>commons-lang</groupId>
-          <artifactId>commons-lang</artifactId>
+          <groupId>org.apache.commons</groupId>
+          <artifactId>commons-lang3</artifactId>
         </exclusion>
         <exclusion>
           <groupId>commons-logging</groupId>
@@ -568,8 +665,6 @@
                       <exclude>commons-logging:commons-logging</exclude>
                       <exclude>junit:junit</exclude>
                       <exclude>com.google.code.findbugs:jsr305</exclude>
-                      <!-- Keep optional runtime deps out of the shading -->
-                      <exclude>org.apache.hadoop:hadoop-yarn-server-timelineservice</exclude>
                       <exclude>log4j:log4j</exclude>
                       <!-- We need a filter that matches just those things that are included in the above artiacts -->
                     </excludes>
@@ -647,6 +742,13 @@
                         <exclude>xml.xsd</exclude>
                       </excludes>
                     </filter>
+                    <!-- filtering HISTORY-JAVA.md from rocksdb jar -->
+                    <filter>
+                    <artifact>org.rocksdb:rocksdbjni</artifact>
+                    <excludes>
+                      <exclude>HISTORY-JAVA.md</exclude>
+                    </excludes>
+                    </filter>
                     <filter>
                       <!-- skip jetty license info already incorporated into LICENSE/NOTICE -->
                       <artifact>org.eclipse.jetty:*</artifact>
@@ -663,10 +765,30 @@
                         <!-- keep optional runtime configuration out of the jar; downstream can provide -->
                         <exclude>capacity-scheduler.xml</exclude>
                         <exclude>krb5.conf</exclude>
+                        <exclude>.keep</exclude>
+                      </excludes>
+                    </filter>
+
+                    <!-- remove .xsd from ehcache -->
+                    <filter>
+                      <artifact>org.ehcache</artifact>
+                      <excludes>
+                        <exclude>ehcache-107ext.xsd</exclude>
+                        <exclude>ehcache-core.xsd</exclude>
                       </excludes>
                     </filter>
                   </filters>
+
+                  <!-- relocate classes from mssql-jdbc -->
                   <relocations>
+                    <relocation>
+                      <pattern>microsoft/</pattern>
+                      <shadedPattern>${shaded.dependency.prefix}.microsoft.</shadedPattern>
+                      <excludes>
+                        <exclude>**/pom.xml</exclude>
+                      </excludes>
+                    </relocation>
+
                     <relocation>
                       <pattern>org/</pattern>
                       <shadedPattern>${shaded.dependency.prefix}.org.</shadedPattern>

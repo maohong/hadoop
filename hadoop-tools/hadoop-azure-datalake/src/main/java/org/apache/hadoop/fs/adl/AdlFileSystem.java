@@ -42,7 +42,7 @@ import com.microsoft.azure.datalake.store.oauth2.RefreshTokenBasedTokenProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.conf.Configuration;
@@ -195,6 +195,14 @@ public class AdlFileSystem extends FileSystem {
         VersionInfo.getVersion().trim() + "/" + clusterName + "/"
         + clusterType);
 
+    int timeout = conf.getInt(ADL_HTTP_TIMEOUT, -1);
+    if (timeout > 0) {
+      // only set timeout if specified in config. Otherwise use SDK default
+      options.setDefaultTimeout(timeout);
+    } else {
+      LOG.info("No valid ADL SDK timeout configured: using SDK default.");
+    }
+
     adlClient.setOptions(options);
 
     boolean trackLatency = conf
@@ -318,6 +326,11 @@ public class AdlFileSystem extends FileSystem {
   @VisibleForTesting
   AzureADTokenProvider getAzureTokenProvider() {
     return azureTokenProvider;
+  }
+
+  @VisibleForTesting
+  public ADLStoreClient getAdlClient() {
+    return adlClient;
   }
 
   /**

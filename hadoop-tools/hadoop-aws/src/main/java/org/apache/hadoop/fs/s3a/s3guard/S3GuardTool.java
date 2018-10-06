@@ -39,7 +39,7 @@ import com.google.common.base.Preconditions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.FileStatus;
@@ -118,6 +118,7 @@ public abstract class S3GuardTool extends Configured implements Tool {
   public static final String REGION_FLAG = "region";
   public static final String READ_FLAG = "read";
   public static final String WRITE_FLAG = "write";
+  public static final String TAG_FLAG = "tag";
 
   /**
    * Constructor a S3Guard tool with HDFS configuration.
@@ -382,6 +383,7 @@ public abstract class S3GuardTool extends Configured implements Tool {
         "  -" + REGION_FLAG + " REGION - Service region for connections\n" +
         "  -" + READ_FLAG + " UNIT - Provisioned read throughput units\n" +
         "  -" + WRITE_FLAG + " UNIT - Provisioned write through put units\n" +
+        "  -" + TAG_FLAG + " key=value; list of tags to tag dynamo table\n" +
         "\n" +
         "  URLs for Amazon DynamoDB are of the form dynamodb://TABLE_NAME.\n" +
         "  Specifying both the -" + REGION_FLAG + " option and an S3A path\n" +
@@ -393,6 +395,8 @@ public abstract class S3GuardTool extends Configured implements Tool {
       getCommandFormat().addOptionWithValue(READ_FLAG);
       // write capacity.
       getCommandFormat().addOptionWithValue(WRITE_FLAG);
+      // tag
+      getCommandFormat().addOptionWithValue(TAG_FLAG);
     }
 
     @Override
@@ -420,6 +424,23 @@ public abstract class S3GuardTool extends Configured implements Tool {
         getConf().setInt(S3GUARD_DDB_TABLE_CAPACITY_WRITE_KEY, writeCapacity);
       }
 
+      String tags = getCommandFormat().getOptValue(TAG_FLAG);
+      if (tags != null && !tags.isEmpty()) {
+        String[] stringList = tags.split(";");
+        Map<String, String> tagsKV = new HashMap<>();
+        for(String kv : stringList) {
+          if(kv.isEmpty() || !kv.contains("=")){
+            continue;
+          }
+          String[] kvSplit = kv.split("=");
+          tagsKV.put(kvSplit[0], kvSplit[1]);
+        }
+
+        for (Map.Entry<String, String> kv : tagsKV.entrySet()) {
+          getConf().set(S3GUARD_DDB_TABLE_TAG + kv.getKey(), kv.getValue());
+        }
+      }
+
       // Validate parameters.
       try {
         parseDynamoDBRegion(paths);
@@ -439,6 +460,10 @@ public abstract class S3GuardTool extends Configured implements Tool {
   static class SetCapacity extends S3GuardTool {
     public static final String NAME = "set-capacity";
     public static final String PURPOSE = "Alter metadata store IO capacity";
+    public static final String READ_CAP_INVALID = "Read capacity must have "
+        + "value greater than or equal to 1.";
+    public static final String WRITE_CAP_INVALID = "Write capacity must have "
+        + "value greater than or equal to 1.";
     private static final String USAGE = NAME + " [OPTIONS] [s3a://BUCKET]\n" +
         "\t" + PURPOSE + "\n\n" +
         "Common options:\n" +
@@ -475,14 +500,34 @@ public abstract class S3GuardTool extends Configured implements Tool {
     public int run(String[] args, PrintStream out) throws Exception {
       List<String> paths = parseArgs(args);
       Map<String, String> options = new HashMap<>();
+      String s3Path = paths.get(0);
+
+      // Check if DynamoDB url is set from arguments.
+      String metadataStoreUri = getCommandFormat().getOptValue(META_FLAG);
+      if(metadataStoreUri == null || metadataStoreUri.isEmpty()) {
+        // If not set, check if filesystem is guarded by creating an
+        // S3AFileSystem and check if hasMetadataStore is true
+        try (S3AFileSystem s3AFileSystem = (S3AFileSystem)
+            S3AFileSystem.newInstance(toUri(s3Path), getConf())){
+          Preconditions.checkState(s3AFileSystem.hasMetadataStore(),
+              "The S3 bucket is unguarded. " + getName()
+                  + " can not be used on an unguarded bucket.");
+        }
+      }
 
       String readCap = getCommandFormat().getOptValue(READ_FLAG);
       if (StringUtils.isNotEmpty(readCap)) {
+        Preconditions.checkArgument(Integer.parseInt(readCap) > 0,
+            READ_CAP_INVALID);
+
         S3GuardTool.println(out, "Read capacity set to %s", readCap);
         options.put(S3GUARD_DDB_TABLE_CAPACITY_READ_KEY, readCap);
       }
       String writeCap = getCommandFormat().getOptValue(WRITE_FLAG);
       if (StringUtils.isNotEmpty(writeCap)) {
+        Preconditions.checkArgument(Integer.parseInt(writeCap) > 0,
+            WRITE_CAP_INVALID);
+
         S3GuardTool.println(out, "Write capacity set to %s", writeCap);
         options.put(S3GUARD_DDB_TABLE_CAPACITY_WRITE_KEY, writeCap);
       }
@@ -805,7 +850,9 @@ public abstract class S3GuardTool extends Configured implements Tool {
      */
     private void compareDir(FileStatus msDir, FileStatus s3Dir,
                             PrintStream out) throws IOException {
-      Preconditions.checkArgument(!(msDir == null && s3Dir == null));
+      Preconditions.checkArgument(!(msDir == null && s3Dir == null),
+          "The path does not exist in metadata store and on s3.");
+
       if (msDir != null && s3Dir != null) {
         Preconditions.checkArgument(msDir.getPath().equals(s3Dir.getPath()),
             String.format("The path from metadata store and s3 are different:" +

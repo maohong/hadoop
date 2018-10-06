@@ -21,6 +21,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.PrintStream;
 import java.io.RandomAccessFile;
 import java.io.StringReader;
@@ -77,6 +78,7 @@ import org.apache.hadoop.hdfs.protocol.LocatedBlocks;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants.SafeModeAction;
 import org.apache.hadoop.hdfs.protocol.SnapshotDiffReport.DiffReportEntry;
 import org.apache.hadoop.hdfs.protocol.SnapshotDiffReport.DiffType;
+import org.apache.hadoop.hdfs.server.common.HdfsServerConstants;
 import org.apache.hadoop.hdfs.server.namenode.EncryptionFaultInjector;
 import org.apache.hadoop.hdfs.server.namenode.EncryptionZoneManager;
 import org.apache.hadoop.hdfs.server.namenode.FSImageTestUtil;
@@ -110,7 +112,6 @@ import org.junit.Test;
 import org.junit.rules.Timeout;
 import org.mockito.Mockito;
 
-import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.KMS_CLIENT_COPY_LEGACY_TOKEN_KEY;
 import static org.junit.Assert.assertNotNull;
 import static org.mockito.Matchers.anyBoolean;
 import static org.mockito.Matchers.anyLong;
@@ -193,8 +194,6 @@ public class TestEncryptionZones {
     // Lower the batch size for testing
     conf.setInt(DFSConfigKeys.DFS_NAMENODE_LIST_ENCRYPTION_ZONES_NUM_RESPONSES,
         2);
-    // disable kms client copy legacy token logic because it's irrelevant.
-    conf.setBoolean(KMS_CLIENT_COPY_LEGACY_TOKEN_KEY, false);
     cluster = new MiniDFSCluster.Builder(conf).numDataNodes(1).build();
     cluster.waitActive();
     Logger.getLogger(EncryptionZoneManager.class).setLevel(Level.TRACE);
@@ -2303,6 +2302,33 @@ public class TestEncryptionZones {
     for (int i = 0; i < 1024; i++) {
       in.seek(i);
       Assert.assertEquals((data[i] & 0XFF), in.read());
+    }
+  }
+
+  /**
+   * Tests that namenode doesn't generate edek if we are writing to
+   * /.reserved/raw directory.
+   * @throws Exception
+   */
+  @Test
+  public void testWriteToEZReservedRaw() throws Exception {
+    String unEncryptedBytes = "hello world";
+    // Create an Encryption Zone.
+    final Path zonePath = new Path("/zone");
+    fsWrapper.mkdir(zonePath, FsPermission.getDirDefault(), false);
+    dfsAdmin.createEncryptionZone(zonePath, TEST_KEY, NO_TRASH);
+    Path p1 = new Path(zonePath, "p1");
+    Path reservedRawPath = new Path("/.reserved/raw/" + p1.toString());
+    // Create an empty file with /.reserved/raw/ path.
+    OutputStream os = fs.create(reservedRawPath);
+    os.close();
+    try {
+      fs.getXAttr(reservedRawPath, HdfsServerConstants
+          .CRYPTO_XATTR_FILE_ENCRYPTION_INFO);
+      fail("getXAttr should have thrown an exception");
+    } catch (IOException ioe) {
+      assertExceptionContains("At least one of the attributes provided was " +
+          "not found.", ioe);
     }
   }
 }

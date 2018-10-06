@@ -18,11 +18,11 @@
 <parent>
    <groupId>org.apache.hadoop</groupId>
    <artifactId>hadoop-project</artifactId>
-   <version>3.2.0-SNAPSHOT</version>
+   <version>3.3.0-SNAPSHOT</version>
    <relativePath>../../hadoop-project</relativePath>
 </parent>
   <artifactId>hadoop-client-runtime</artifactId>
-  <version>3.2.0-SNAPSHOT</version>
+  <version>3.3.0-SNAPSHOT</version>
   <packaging>jar</packaging>
 
   <description>Apache Hadoop Client</description>
@@ -157,6 +157,7 @@
                       <!-- Leave javax APIs that are stable -->
                       <!-- the jdk ships part of the javax.annotation namespace, so if we want to relocate this we'll have to care it out by class :( -->
                       <exclude>com.google.code.findbugs:jsr305</exclude>
+                      <exclude>io.dropwizard.metrics:metrics-core</exclude>
                     </excludes>
                   </artifactSet>
                   <filters>
@@ -209,6 +210,17 @@
                       <excludes>
                         <exclude>keytab.txt</exclude>
                         <exclude>ccache.txt</exclude>
+                      </excludes>
+                    </filter>
+                    <!-- remove utility classes which are not required from
+                         dnsjava -->
+                    <filter>
+                      <artifact>dnsjava:dnsjava</artifact>
+                      <excludes>
+                        <exclude>dig*</exclude>
+                        <exclude>jnamed*</exclude>
+                        <exclude>lookup*</exclude>
+                        <exclude>update*</exclude>
                       </excludes>
                     </filter>
                   </filters>

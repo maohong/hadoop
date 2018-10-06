@@ -18,7 +18,6 @@
 
 package org.apache.hadoop.yarn.server.nodemanager.containermanager.linux.resources.gpu;
 
-import com.google.common.annotations.VisibleForTesting;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -49,6 +48,7 @@ public class GpuResourceHandlerImpl implements ResourceHandler {
   public static final String EXCLUDED_GPUS_CLI_OPTION = "--excluded_gpus";
   public static final String CONTAINER_ID_CLI_OPTION = "--container_id";
 
+  private Context nmContext;
   private GpuResourceAllocator gpuAllocator;
   private CGroupsHandler cGroupsHandler;
   private PrivilegedOperationExecutor privilegedOperationExecutor;
@@ -56,6 +56,7 @@ public class GpuResourceHandlerImpl implements ResourceHandler {
   public GpuResourceHandlerImpl(Context nmContext,
       CGroupsHandler cGroupsHandler,
       PrivilegedOperationExecutor privilegedOperationExecutor) {
+    this.nmContext = nmContext;
     this.cGroupsHandler = cGroupsHandler;
     this.privilegedOperationExecutor = privilegedOperationExecutor;
     gpuAllocator = new GpuResourceAllocator(nmContext);
@@ -103,6 +104,7 @@ public class GpuResourceHandlerImpl implements ResourceHandler {
     cGroupsHandler.createCGroup(CGroupsHandler.CGroupController.DEVICES,
         containerIdStr);
     if (!DockerLinuxContainerRuntime.isDockerContainerRequested(
+        nmContext.getConf(),
         container.getLaunchContext().getEnvironment())) {
       // Write to devices cgroup only for non-docker container. The reason is
       // docker engine runtime runc do the devices cgroups initialize in the
@@ -161,6 +163,12 @@ public class GpuResourceHandlerImpl implements ResourceHandler {
   public List<PrivilegedOperation> reacquireContainer(ContainerId containerId)
       throws ResourceHandlerException {
     gpuAllocator.recoverAssignedGpus(containerId);
+    return null;
+  }
+
+  @Override
+  public List<PrivilegedOperation> updateContainer(Container container)
+      throws ResourceHandlerException {
     return null;
   }
 

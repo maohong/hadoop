@@ -34,7 +34,7 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.yarn.api.records.ContainerSubState;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.scheduler.UpdateContainerSchedulerEvent;
 import org.slf4j.Logger;
@@ -384,7 +384,7 @@ public class ContainerImpl implements Container {
        UPDATE_DIAGNOSTICS_TRANSITION)
     .addTransition(ContainerState.SCHEDULED, ContainerState.KILLING,
         ContainerEventType.KILL_CONTAINER,
-        new KillBeforeRunningTransition())
+        new KillTransition())
     .addTransition(ContainerState.SCHEDULED, ContainerState.SCHEDULED,
         ContainerEventType.UPDATE_CONTAINER_TOKEN,
         new NotifyContainerSchedulerOfUpdateTransition())
@@ -618,6 +618,9 @@ public class ContainerImpl implements Container {
     .addTransition(ContainerState.EXITED_WITH_SUCCESS,
         ContainerState.EXITED_WITH_SUCCESS,
         ContainerEventType.UPDATE_CONTAINER_TOKEN)
+    .addTransition(ContainerState.EXITED_WITH_SUCCESS,
+        ContainerState.EXITED_WITH_SUCCESS,
+        ContainerEventType.CONTAINER_KILLED_ON_REQUEST)
 
     // From EXITED_WITH_FAILURE State
     .addTransition(ContainerState.EXITED_WITH_FAILURE, ContainerState.DONE,
@@ -635,6 +638,9 @@ public class ContainerImpl implements Container {
     .addTransition(ContainerState.EXITED_WITH_FAILURE,
         ContainerState.EXITED_WITH_FAILURE,
         ContainerEventType.UPDATE_CONTAINER_TOKEN)
+    .addTransition(ContainerState.EXITED_WITH_FAILURE,
+        ContainerState.EXITED_WITH_FAILURE,
+        ContainerEventType.CONTAINER_KILLED_ON_REQUEST)
 
     // From KILLING State.
     .addTransition(ContainerState.KILLING,
@@ -694,6 +700,9 @@ public class ContainerImpl implements Container {
     .addTransition(ContainerState.CONTAINER_CLEANEDUP_AFTER_KILL,
         ContainerState.CONTAINER_CLEANEDUP_AFTER_KILL,
         ContainerEventType.UPDATE_CONTAINER_TOKEN)
+    .addTransition(ContainerState.CONTAINER_CLEANEDUP_AFTER_KILL,
+        ContainerState.CONTAINER_CLEANEDUP_AFTER_KILL,
+        ContainerEventType.CONTAINER_KILLED_ON_REQUEST)
 
     // From DONE
     .addTransition(ContainerState.DONE, ContainerState.DONE,
@@ -714,6 +723,8 @@ public class ContainerImpl implements Container {
     // No transition - assuming container is on its way to completion
     .addTransition(ContainerState.DONE, ContainerState.DONE,
         ContainerEventType.UPDATE_CONTAINER_TOKEN)
+    .addTransition(ContainerState.DONE, ContainerState.DONE,
+        ContainerEventType.CONTAINER_KILLED_ON_REQUEST)
 
     // create the topology tables
     .installTopology();
@@ -880,6 +891,11 @@ public class ContainerImpl implements Container {
   @Override
   public long getContainerStartTime() {
     return this.startTime;
+  }
+
+  @Override
+  public long getContainerLaunchTime() {
+    return this.containerLaunchStartTime;
   }
 
   @Override
@@ -1528,6 +1544,7 @@ public class ContainerImpl implements Container {
       // TODO: Add containerWorkDir to the deletion service.
 
       if (DockerLinuxContainerRuntime.isDockerContainerRequested(
+          container.daemonConf,
           container.getLaunchContext().getEnvironment())) {
         removeDockerContainer(container);
       }
@@ -1568,6 +1585,7 @@ public class ContainerImpl implements Container {
       // TODO: Add containerOuputDir to the deletion service.
 
       if (DockerLinuxContainerRuntime.isDockerContainerRequested(
+          container.daemonConf,
           container.getLaunchContext().getEnvironment())) {
         removeDockerContainer(container);
       }
@@ -1602,8 +1620,10 @@ public class ContainerImpl implements Container {
         }
         container.addDiagnostics(exitEvent.getDiagnosticInfo() + "\n");
       }
-
       if (container.shouldRetry(container.exitCode)) {
+        // Updates to the retry context should  be protected from concurrent
+        // writes. It should only be called from this transition.
+        container.retryPolicy.updateRetryContext(container.windowRetryContext);
         container.storeRetryContext();
         doRelaunch(container,
             container.windowRetryContext.getRemainingRetries(),
@@ -1840,6 +1860,7 @@ public class ContainerImpl implements Container {
       }
 
       if (DockerLinuxContainerRuntime.isDockerContainerRequested(
+          container.daemonConf,
           container.getLaunchContext().getEnvironment())) {
         removeDockerContainer(container);
       }
@@ -2215,5 +2236,16 @@ public class ContainerImpl implements Container {
   @VisibleForTesting
   SlidingWindowRetryPolicy getRetryPolicy() {
     return retryPolicy;
+  }
+
+  @Override
+  public boolean isContainerInFinalStates() {
+    ContainerState state = getContainerState();
+    return state == ContainerState.KILLING || state == ContainerState.DONE
+        || state == ContainerState.LOCALIZATION_FAILED
+        || state == ContainerState.CONTAINER_RESOURCES_CLEANINGUP
+        || state == ContainerState.CONTAINER_CLEANEDUP_AFTER_KILL
+        || state == ContainerState.EXITED_WITH_FAILURE
+        || state == ContainerState.EXITED_WITH_SUCCESS;
   }
 }

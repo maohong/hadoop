@@ -157,6 +157,8 @@ import org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.GetSto
 import org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.GetStoragePolicyResponseProto;
 import org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.IsFileClosedRequestProto;
 import org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.IsFileClosedResponseProto;
+import org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.UpgradeStatusRequestProto;
+import org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.UpgradeStatusResponseProto;
 import org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.ListCacheDirectivesRequestProto;
 import org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.ListCacheDirectivesResponseProto;
 import org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.ListCachePoolsRequestProto;
@@ -223,6 +225,8 @@ import org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.Update
 import org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.UpdateBlockForPipelineResponseProto;
 import org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.UpdatePipelineRequestProto;
 import org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.UpdatePipelineResponseProto;
+import org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.SatisfyStoragePolicyRequestProto;
+import org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.SatisfyStoragePolicyResponseProto;
 import org.apache.hadoop.hdfs.protocol.proto.EncryptionZonesProtos.CreateEncryptionZoneResponseProto;
 import org.apache.hadoop.hdfs.protocol.proto.EncryptionZonesProtos.CreateEncryptionZoneRequestProto;
 import org.apache.hadoop.hdfs.protocol.proto.EncryptionZonesProtos.GetEZForPathResponseProto;
@@ -251,7 +255,7 @@ import org.apache.hadoop.hdfs.protocol.proto.ErasureCodingProtos.UnsetErasureCod
 import org.apache.hadoop.hdfs.protocol.proto.ErasureCodingProtos.UnsetErasureCodingPolicyResponseProto;
 import org.apache.hadoop.hdfs.protocol.proto.ErasureCodingProtos.GetErasureCodingCodecsRequestProto;
 import org.apache.hadoop.hdfs.protocol.proto.ErasureCodingProtos.GetErasureCodingCodecsResponseProto;
-import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos;
+import org.apache.hadoop.hdfs.protocol.proto.*;
 import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.BlockStoragePolicyProto;
 import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.DatanodeIDProto;
 import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.DatanodeInfoProto;
@@ -404,6 +408,10 @@ public class ClientNamenodeProtocolServerSideTranslatorPB implements
 
   private static final CheckAccessResponseProto
     VOID_CHECKACCESS_RESPONSE = CheckAccessResponseProto.getDefaultInstance();
+
+  private static final SatisfyStoragePolicyResponseProto
+      VOID_SATISFYSTORAGEPOLICY_RESPONSE = SatisfyStoragePolicyResponseProto
+      .getDefaultInstance();
 
   /**
    * Constructor
@@ -894,6 +902,21 @@ public class ClientNamenodeProtocolServerSideTranslatorPB implements
     try {
       server.finalizeUpgrade();
       return VOID_FINALIZEUPGRADE_RESPONSE;
+    } catch (IOException e) {
+      throw new ServiceException(e);
+    }
+  }
+
+  @Override
+  public UpgradeStatusResponseProto upgradeStatus(
+      RpcController controller, UpgradeStatusRequestProto req)
+      throws ServiceException {
+    try {
+      final boolean isUpgradeFinalized = server.upgradeStatus();
+      UpgradeStatusResponseProto.Builder b =
+          UpgradeStatusResponseProto.newBuilder();
+      b.setUpgradeFinalized(isUpgradeFinalized);
+      return b.build();
     } catch (IOException e) {
       throw new ServiceException(e);
     }
@@ -1868,5 +1891,17 @@ public class ClientNamenodeProtocolServerSideTranslatorPB implements
     } catch (IOException e) {
       throw new ServiceException(e);
     }
+  }
+
+  @Override
+  public SatisfyStoragePolicyResponseProto satisfyStoragePolicy(
+      RpcController controller,
+      SatisfyStoragePolicyRequestProto request) throws ServiceException {
+    try {
+      server.satisfyStoragePolicy(request.getSrc());
+    } catch (IOException e) {
+      throw new ServiceException(e);
+    }
+    return VOID_SATISFYSTORAGEPOLICY_RESPONSE;
   }
 }

@@ -24,11 +24,16 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.Set;
 
+import com.google.common.base.Preconditions;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
+import org.apache.hadoop.hdfs.protocol.HdfsConstants;
+import org.apache.hadoop.hdfs.protocol.HdfsFileStatus;
 import org.apache.hadoop.hdfs.protocol.proto.RouterProtocolProtos.RouterAdminProtocolService;
 import org.apache.hadoop.hdfs.protocolPB.RouterAdminProtocolPB;
 import org.apache.hadoop.hdfs.protocolPB.RouterAdminProtocolServerSideTranslatorPB;
+import org.apache.hadoop.hdfs.server.federation.resolver.ActiveNamenodeResolver;
+import org.apache.hadoop.hdfs.server.federation.resolver.FederationNamespaceInfo;
 import org.apache.hadoop.hdfs.server.federation.resolver.MountTableManager;
 import org.apache.hadoop.hdfs.server.federation.store.DisabledNameserviceStore;
 import org.apache.hadoop.hdfs.server.federation.store.MountTableStore;
@@ -52,6 +57,7 @@ import org.apache.hadoop.hdfs.server.federation.store.protocol.RemoveMountTableE
 import org.apache.hadoop.hdfs.server.federation.store.protocol.RemoveMountTableEntryResponse;
 import org.apache.hadoop.hdfs.server.federation.store.protocol.UpdateMountTableEntryRequest;
 import org.apache.hadoop.hdfs.server.federation.store.protocol.UpdateMountTableEntryResponse;
+import org.apache.hadoop.hdfs.server.federation.store.records.MountTable;
 import org.apache.hadoop.hdfs.server.namenode.NameNode;
 import org.apache.hadoop.ipc.ProtobufRpcEngine;
 import org.apache.hadoop.ipc.RPC;
@@ -226,7 +232,34 @@ public class RouterAdminServer extends AbstractService
   @Override
   public UpdateMountTableEntryResponse updateMountTableEntry(
       UpdateMountTableEntryRequest request) throws IOException {
-    return getMountTableStore().updateMountTableEntry(request);
+    UpdateMountTableEntryResponse response =
+        getMountTableStore().updateMountTableEntry(request);
+
+    MountTable mountTable = request.getEntry();
+    if (mountTable != null) {
+      synchronizeQuota(mountTable);
+    }
+    return response;
+  }
+
+  /**
+   * Synchronize the quota value across mount table and subclusters.
+   * @param mountTable Quota set in given mount table.
+   * @throws IOException
+   */
+  private void synchronizeQuota(MountTable mountTable) throws IOException {
+    String path = mountTable.getSourcePath();
+    long nsQuota = mountTable.getQuota().getQuota();
+    long ssQuota = mountTable.getQuota().getSpaceQuota();
+
+    if (nsQuota != HdfsConstants.QUOTA_DONT_SET
+        || ssQuota != HdfsConstants.QUOTA_DONT_SET) {
+      HdfsFileStatus ret = this.router.getRpcServer().getFileInfo(path);
+      if (ret != null) {
+        this.router.getRpcServer().getQuotaModule().setQuota(path, nsQuota,
+            ssQuota, null);
+      }
+    }
   }
 
   @Override
@@ -244,23 +277,50 @@ public class RouterAdminServer extends AbstractService
   @Override
   public EnterSafeModeResponse enterSafeMode(EnterSafeModeRequest request)
       throws IOException {
-    this.router.updateRouterState(RouterServiceState.SAFEMODE);
-    this.router.getRpcServer().setSafeMode(true);
-    return EnterSafeModeResponse.newInstance(verifySafeMode(true));
+    boolean success = false;
+    RouterSafemodeService safeModeService = this.router.getSafemodeService();
+    if (safeModeService != null) {
+      this.router.updateRouterState(RouterServiceState.SAFEMODE);
+      safeModeService.setManualSafeMode(true);
+      success = verifySafeMode(true);
+      if (success) {
+        LOG.info("STATE* Safe mode is ON.\n" + "It was turned on manually. "
+            + "Use \"hdfs dfsrouteradmin -safemode leave\" to turn"
+            + " safe mode off.");
+      } else {
+        LOG.error("Unable to enter safemode.");
+      }
+    }
+    return EnterSafeModeResponse.newInstance(success);
   }
 
   @Override
   public LeaveSafeModeResponse leaveSafeMode(LeaveSafeModeRequest request)
       throws IOException {
-    this.router.updateRouterState(RouterServiceState.RUNNING);
-    this.router.getRpcServer().setSafeMode(false);
-    return LeaveSafeModeResponse.newInstance(verifySafeMode(false));
+    boolean success = false;
+    RouterSafemodeService safeModeService = this.router.getSafemodeService();
+    if (safeModeService != null) {
+      this.router.updateRouterState(RouterServiceState.RUNNING);
+      safeModeService.setManualSafeMode(false);
+      success = verifySafeMode(false);
+      if (success) {
+        LOG.info("STATE* Safe mode is OFF.\n" + "It was turned off manually.");
+      } else {
+        LOG.error("Unable to leave safemode.");
+      }
+    }
+    return LeaveSafeModeResponse.newInstance(success);
   }
 
   @Override
   public GetSafeModeResponse getSafeMode(GetSafeModeRequest request)
       throws IOException {
-    boolean isInSafeMode = this.router.getRpcServer().isInSafeMode();
+    boolean isInSafeMode = false;
+    RouterSafemodeService safeModeService = this.router.getSafemodeService();
+    if (safeModeService != null) {
+      isInSafeMode = safeModeService.isInSafeMode();
+      LOG.info("Safemode status retrieved successfully.");
+    }
     return GetSafeModeResponse.newInstance(isInSafeMode);
   }
 
@@ -270,7 +330,8 @@ public class RouterAdminServer extends AbstractService
    * @return
    */
   private boolean verifySafeMode(boolean isInSafeMode) {
-    boolean serverInSafeMode = this.router.getRpcServer().isInSafeMode();
+    Preconditions.checkNotNull(this.router.getSafemodeService());
+    boolean serverInSafeMode = this.router.getSafemodeService().isInSafeMode();
     RouterServiceState currentState = this.router.getRouterState();
 
     return (isInSafeMode && currentState == RouterServiceState.SAFEMODE
@@ -282,28 +343,70 @@ public class RouterAdminServer extends AbstractService
   @Override
   public DisableNameserviceResponse disableNameservice(
       DisableNameserviceRequest request) throws IOException {
-    // TODO check permissions
+
+    RouterPermissionChecker pc = getPermissionChecker();
+    if (pc != null) {
+      pc.checkSuperuserPrivilege();
+    }
+
     String nsId = request.getNameServiceId();
-    // TODO check that the name service exists
-    boolean success = getDisabledNameserviceStore().disableNameservice(nsId);
+    boolean success = false;
+    if (namespaceExists(nsId)) {
+      success = getDisabledNameserviceStore().disableNameservice(nsId);
+      if (success) {
+        LOG.info("Nameservice {} disabled successfully.", nsId);
+      } else {
+        LOG.error("Unable to disable Nameservice {}", nsId);
+      }
+    } else {
+      LOG.error("Cannot disable {}, it does not exists", nsId);
+    }
     return DisableNameserviceResponse.newInstance(success);
+  }
+
+  private boolean namespaceExists(final String nsId) throws IOException {
+    boolean found = false;
+    ActiveNamenodeResolver resolver = router.getNamenodeResolver();
+    Set<FederationNamespaceInfo> nss = resolver.getNamespaces();
+    for (FederationNamespaceInfo ns : nss) {
+      if (nsId.equals(ns.getNameserviceId())) {
+        found = true;
+        break;
+      }
+    }
+    return found;
   }
 
   @Override
   public EnableNameserviceResponse enableNameservice(
       EnableNameserviceRequest request) throws IOException {
-    // TODO check permissions
+    RouterPermissionChecker pc = getPermissionChecker();
+    if (pc != null) {
+      pc.checkSuperuserPrivilege();
+    }
+
     String nsId = request.getNameServiceId();
-    // TODO check that the name service exists
-    boolean success = getDisabledNameserviceStore().enableNameservice(nsId);
+    DisabledNameserviceStore store = getDisabledNameserviceStore();
+    Set<String> disabled = store.getDisabledNameservices();
+    boolean success = false;
+    if (disabled.contains(nsId)) {
+      success = store.enableNameservice(nsId);
+      if (success) {
+        LOG.info("Nameservice {} enabled successfully.", nsId);
+      } else {
+        LOG.error("Unable to enable Nameservice {}", nsId);
+      }
+    } else {
+      LOG.error("Cannot enable {}, it was not disabled", nsId);
+    }
     return EnableNameserviceResponse.newInstance(success);
   }
 
   @Override
   public GetDisabledNameservicesResponse getDisabledNameservices(
       GetDisabledNameservicesRequest request) throws IOException {
-    // TODO check permissions
-    Set<String> nsIds = getDisabledNameserviceStore().getDisabledNameservices();
+    Set<String> nsIds =
+        getDisabledNameserviceStore().getDisabledNameservices();
     return GetDisabledNameservicesResponse.newInstance(nsIds);
   }
 
@@ -312,8 +415,8 @@ public class RouterAdminServer extends AbstractService
    * control. This method will be invoked during each RPC call in router
    * admin server.
    *
-   * @return Router permission checker
-   * @throws AccessControlException
+   * @return Router permission checker.
+   * @throws AccessControlException If the user is not authorized.
    */
   public static RouterPermissionChecker getPermissionChecker()
       throws AccessControlException {

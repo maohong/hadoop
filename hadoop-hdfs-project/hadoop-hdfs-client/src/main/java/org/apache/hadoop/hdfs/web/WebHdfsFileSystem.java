@@ -56,8 +56,6 @@ import java.util.concurrent.TimeUnit;
 import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.MediaType;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.ObjectReader;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.io.input.BoundedInputStream;
 import org.apache.hadoop.conf.Configuration;
@@ -121,6 +119,7 @@ import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.security.token.TokenIdentifier;
 import org.apache.hadoop.security.token.TokenSelector;
 import org.apache.hadoop.security.token.delegation.AbstractDelegationTokenSelector;
+import org.apache.hadoop.util.JsonSerialization;
 import org.apache.hadoop.util.KMSUtil;
 import org.apache.hadoop.util.Progressable;
 import org.apache.hadoop.util.StringUtils;
@@ -146,6 +145,8 @@ public class WebHdfsFileSystem extends FileSystem
   public static final String EZ_HEADER = "X-Hadoop-Accept-EZ";
   public static final String FEFINFO_HEADER = "X-Hadoop-feInfo";
 
+  public static final String SPECIAL_FILENAME_CHARACTERS_REGEX = ".*[;+%].*";
+
   /**
    * Default connection factory may be overridden in tests to use smaller
    * timeout values
@@ -170,14 +171,11 @@ public class WebHdfsFileSystem extends FileSystem
   private boolean disallowFallbackToInsecureCluster;
   private String restCsrfCustomHeader;
   private Set<String> restCsrfMethodsToIgnore;
-  private static final ObjectReader READER =
-      new ObjectMapper().readerFor(Map.class);
 
   private DFSOpsCountStatistics storageStatistics;
 
   /**
    * Return the protocol scheme for the FileSystem.
-   * <p/>
    *
    * @return <code>webhdfs</code>
    */
@@ -474,7 +472,7 @@ public class WebHdfsFileSystem extends FileSystem
               + "\" (parsed=\"" + parsed + "\")");
         }
       }
-      return READER.readValue(in);
+      return JsonSerialization.mapReader().readValue(in);
     } finally {
       in.close();
     }
@@ -606,8 +604,10 @@ public class WebHdfsFileSystem extends FileSystem
     if (fspath != null) {
       URI fspathUri = fspath.toUri();
       String fspathUriDecoded = fspathUri.getPath();
+      boolean pathAlreadyEncoded = false;
       try {
         fspathUriDecoded = URLDecoder.decode(fspathUri.getPath(), "UTF-8");
+        pathAlreadyEncoded = true;
       } catch (IllegalArgumentException ex) {
         LOG.trace("Cannot decode URL encoded file", ex);
       }
@@ -617,7 +617,12 @@ public class WebHdfsFileSystem extends FileSystem
         StringBuilder fsPathEncodedItems = new StringBuilder();
         for (String fsPathItem : fspathItems) {
           fsPathEncodedItems.append("/");
-          fsPathEncodedItems.append(URLEncoder.encode(fsPathItem, "UTF-8"));
+          if (fsPathItem.matches(SPECIAL_FILENAME_CHARACTERS_REGEX) ||
+              pathAlreadyEncoded) {
+            fsPathEncodedItems.append(URLEncoder.encode(fsPathItem, "UTF-8"));
+          } else {
+            fsPathEncodedItems.append(fsPathItem);
+          }
         }
         encodedFSPath = new Path(fspathUri.getScheme(),
                 fspathUri.getAuthority(), fsPathEncodedItems.substring(1));

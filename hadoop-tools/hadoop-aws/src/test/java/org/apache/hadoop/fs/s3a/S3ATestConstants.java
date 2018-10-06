@@ -106,6 +106,11 @@ public interface S3ATestConstants {
   String KEY_HUGE_PARTITION_SIZE = S3A_SCALE_TEST + "huge.partitionsize";
 
   /**
+   * Size of partitions to upload: {@value}.
+   */
+  String DEFAULT_HUGE_PARTITION_SIZE = "8M";
+
+  /**
    * The default huge size is small —full 5GB+ scale tests are something
    * to run in long test runs on EC2 VMs. {@value}.
    */
@@ -143,7 +148,6 @@ public interface S3ATestConstants {
   String TEST_S3GUARD_IMPLEMENTATION = TEST_S3GUARD_PREFIX + ".implementation";
   String TEST_S3GUARD_IMPLEMENTATION_LOCAL = "local";
   String TEST_S3GUARD_IMPLEMENTATION_DYNAMO = "dynamo";
-  String TEST_S3GUARD_IMPLEMENTATION_DYNAMODBLOCAL = "dynamodblocal";
   String TEST_S3GUARD_IMPLEMENTATION_NONE = "none";
 
   /**

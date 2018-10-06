@@ -45,6 +45,8 @@ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerUtils;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.AppPriorityACLConfigurationParser.AppPriorityACLKeyType;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.policy.PriorityUtilizationQueueOrderingPolicy;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.policy.QueueOrderingPolicy;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.placement.MultiNodeLookupPolicy;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.placement.MultiNodePolicySpec;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.policy.FairOrderingPolicy;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.policy.FifoOrderingPolicy;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.policy.OrderingPolicy;
@@ -244,6 +246,20 @@ public class CapacitySchedulerConfiguration extends ReservationSchedulerConfigur
   @Private
   public static final String SCHEDULE_ASYNCHRONOUSLY_MAXIMUM_THREAD =
       SCHEDULE_ASYNCHRONOUSLY_PREFIX + ".maximum-threads";
+
+  @Private
+  public static final String SCHEDULE_ASYNCHRONOUSLY_MAXIMUM_PENDING_BACKLOGS =
+      SCHEDULE_ASYNCHRONOUSLY_PREFIX + ".maximum-pending-backlogs";
+
+  @Private
+  public static final String APP_FAIL_FAST = PREFIX + "application.fail-fast";
+
+  @Private
+  public static final boolean DEFAULT_APP_FAIL_FAST = false;
+
+  @Private
+  public static final Integer
+      DEFAULT_SCHEDULE_ASYNCHRONOUSLY_MAXIMUM_PENDING_BACKLOGS = 100;
 
   @Private
   public static final boolean DEFAULT_SCHEDULE_ASYNCHRONOUSLY_ENABLE = false;
@@ -1328,6 +1344,10 @@ public class CapacitySchedulerConfiguration extends ReservationSchedulerConfigur
     return getBoolean(LAZY_PREEMPTION_ENABLED, DEFAULT_LAZY_PREEMPTION_ENABLED);
   }
 
+  public boolean shouldAppFailFast(Configuration conf) {
+    return conf.getBoolean(APP_FAIL_FAST, DEFAULT_APP_FAIL_FAST);
+  }
+
   private static final String PREEMPTION_CONFIG_PREFIX =
       "yarn.resourcemanager.monitor.capacity.preemption.";
 
@@ -1450,6 +1470,23 @@ public class CapacitySchedulerConfiguration extends ReservationSchedulerConfigur
   public static final String INTRAQUEUE_PREEMPTION_ORDER_POLICY = PREEMPTION_CONFIG_PREFIX
       + INTRA_QUEUE_PREEMPTION_CONFIG_PREFIX + "preemption-order-policy";
   public static final String DEFAULT_INTRAQUEUE_PREEMPTION_ORDER_POLICY = "userlimit_first";
+
+  /**
+   * Should we allow queues continue grow after all queue reaches their
+   * guaranteed capacity.
+   */
+  public static final String PREEMPTION_TO_BALANCE_QUEUES_BEYOND_GUARANTEED =
+      PREEMPTION_CONFIG_PREFIX + "preemption-to-balance-queue-after-satisfied.enabled";
+  public static final boolean DEFAULT_PREEMPTION_TO_BALANCE_QUEUES_BEYOND_GUARANTEED = false;
+
+  /**
+   * How long we will wait to balance queues, by default it is 5 mins.
+   */
+  public static final String MAX_WAIT_BEFORE_KILL_FOR_QUEUE_BALANCE_PREEMPTION =
+      PREEMPTION_CONFIG_PREFIX + "preemption-to-balance-queue-after-satisfied.max-wait-before-kill";
+  public static final long
+      DEFAULT_MAX_WAIT_BEFORE_KILL_FOR_QUEUE_BALANCE_PREEMPTION =
+      300 * 1000;
 
   /**
    * Maximum application for a queue to be used when application per queue is
@@ -2092,6 +2129,120 @@ public class CapacitySchedulerConfiguration extends ReservationSchedulerConfigur
       resource.setResourceInformation(splits[0].trim(), ResourceInformation
           .newInstance(splits[0].trim(), units, resourceValue));
       break;
+    }
+  }
+
+  @Private public static final String MULTI_NODE_SORTING_POLICIES =
+      PREFIX + "multi-node-sorting.policy.names";
+
+  @Private public static final String MULTI_NODE_SORTING_POLICY_NAME =
+      PREFIX + "multi-node-sorting.policy";
+
+  /**
+   * resource usage based node sorting algorithm.
+   */
+  public static final String DEFAULT_NODE_SORTING_POLICY = "default";
+  public static final String DEFAULT_NODE_SORTING_POLICY_CLASSNAME
+      = "org.apache.hadoop.yarn.server.resourcemanager.scheduler.placement.ResourceUsageMultiNodeLookupPolicy";
+  public static final long DEFAULT_MULTI_NODE_SORTING_INTERVAL = 1000L;
+
+  @Private
+  public static final String MULTI_NODE_PLACEMENT_ENABLED = PREFIX
+      + "multi-node-placement-enabled";
+
+  @Private
+  public static final boolean DEFAULT_MULTI_NODE_PLACEMENT_ENABLED = false;
+
+  public String getMultiNodesSortingAlgorithmPolicy(
+      String queue) {
+
+    String policyName = get(
+        getQueuePrefix(queue) + "multi-node-sorting.policy");
+
+    if (policyName == null) {
+      policyName = get(MULTI_NODE_SORTING_POLICY_NAME);
+    }
+
+    // If node sorting policy is not configured in queue and in cluster level,
+    // it is been assumed that this queue is not enabled with multi-node lookup.
+    if (policyName == null || policyName.isEmpty()) {
+      return null;
+    }
+
+    String policyClassName = get(MULTI_NODE_SORTING_POLICY_NAME + DOT
+        + policyName.trim() + DOT + "class");
+
+    if (policyClassName == null || policyClassName.isEmpty()) {
+      throw new YarnRuntimeException(
+          policyName.trim() + " Class is not configured or not an instance of "
+              + MultiNodeLookupPolicy.class.getCanonicalName());
+    }
+
+    return normalizePolicyName(policyClassName.trim());
+  }
+
+  public boolean getMultiNodePlacementEnabled() {
+    return getBoolean(MULTI_NODE_PLACEMENT_ENABLED,
+        DEFAULT_MULTI_NODE_PLACEMENT_ENABLED);
+  }
+
+  public Set<MultiNodePolicySpec> getMultiNodePlacementPolicies() {
+    String[] policies = getTrimmedStrings(MULTI_NODE_SORTING_POLICIES);
+
+    // In other cases, split the accessibleLabelStr by ","
+    Set<MultiNodePolicySpec> set = new HashSet<MultiNodePolicySpec>();
+    for (String str : policies) {
+      if (!str.trim().isEmpty()) {
+        String policyClassName = get(
+            MULTI_NODE_SORTING_POLICY_NAME + DOT + str.trim() + DOT + "class");
+        if (str.trim().equals(DEFAULT_NODE_SORTING_POLICY)) {
+          policyClassName = get(
+              MULTI_NODE_SORTING_POLICY_NAME + DOT + str.trim() + DOT + "class",
+              DEFAULT_NODE_SORTING_POLICY_CLASSNAME);
+        }
+
+        // This check is needed as default class name is loaded only for
+        // DEFAULT_NODE_SORTING_POLICY.
+        if (policyClassName == null) {
+          throw new YarnRuntimeException(
+              str.trim() + " Class is not configured or not an instance of "
+                  + MultiNodeLookupPolicy.class.getCanonicalName());
+        }
+        policyClassName = normalizePolicyName(policyClassName.trim());
+        long policySortingInterval = getLong(
+            MULTI_NODE_SORTING_POLICY_NAME + DOT + str.trim()
+                + DOT + "sorting-interval.ms",
+            DEFAULT_MULTI_NODE_SORTING_INTERVAL);
+        if (policySortingInterval < 0) {
+          throw new YarnRuntimeException(
+              str.trim()
+                  + " multi-node policy is configured with invalid"
+                  + " sorting-interval:" + policySortingInterval);
+        }
+        set.add(
+            new MultiNodePolicySpec(policyClassName, policySortingInterval));
+      }
+    }
+
+    return Collections.unmodifiableSet(set);
+  }
+
+  private String normalizePolicyName(String policyName) {
+
+    // Ensure that custom node sorting algorithm class is valid.
+    try {
+      Class<?> nodeSortingPolicyClazz = getClassByName(policyName);
+      if (MultiNodeLookupPolicy.class
+          .isAssignableFrom(nodeSortingPolicyClazz)) {
+        return policyName;
+      } else {
+        throw new YarnRuntimeException(
+            "Class: " + policyName + " not instance of "
+                + MultiNodeLookupPolicy.class.getCanonicalName());
+      }
+    } catch (ClassNotFoundException e) {
+      throw new YarnRuntimeException(
+          "Could not instantiate " + "NodesSortingPolicy: " + policyName, e);
     }
   }
 }

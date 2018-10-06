@@ -18,9 +18,13 @@
 
 package org.apache.hadoop.yarn.service.component;
 
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Preconditions;
 import org.apache.hadoop.yarn.api.records.Container;
 import org.apache.hadoop.yarn.api.records.ContainerStatus;
 import org.apache.hadoop.yarn.api.records.ExecutionType;
+import static org.apache.hadoop.yarn.service.api.records.Component
+    .RestartPolicyEnum;
 import org.apache.hadoop.yarn.api.records.ExecutionTypeRequest;
 import org.apache.hadoop.yarn.api.records.Priority;
 import org.apache.hadoop.yarn.api.records.Resource;
@@ -34,20 +38,24 @@ import org.apache.hadoop.yarn.client.api.AMRMClient.ContainerRequest;
 import org.apache.hadoop.yarn.client.api.async.AMRMClientAsync;
 import org.apache.hadoop.yarn.event.AsyncDispatcher;
 import org.apache.hadoop.yarn.event.EventHandler;
+import org.apache.hadoop.yarn.service.ServiceEvent;
+import org.apache.hadoop.yarn.service.ServiceEventType;
+import org.apache.hadoop.yarn.service.api.records.ContainerState;
+import org.apache.hadoop.yarn.service.api.records.ResourceInformation;
+import org.apache.hadoop.yarn.service.component.instance.ComponentInstance;
+import org.apache.hadoop.yarn.service.component.instance.ComponentInstanceId;
 import org.apache.hadoop.yarn.service.ContainerFailureTracker;
 import org.apache.hadoop.yarn.service.ServiceContext;
-import org.apache.hadoop.yarn.service.ServiceMaster;
 import org.apache.hadoop.yarn.service.ServiceMetrics;
 import org.apache.hadoop.yarn.service.ServiceScheduler;
 import org.apache.hadoop.yarn.service.api.records.PlacementPolicy;
-import org.apache.hadoop.yarn.service.api.records.ResourceInformation;
 import org.apache.hadoop.yarn.service.api.records.ServiceState;
-import org.apache.hadoop.yarn.service.component.instance.ComponentInstance;
 import org.apache.hadoop.yarn.service.component.instance.ComponentInstanceEvent;
-import org.apache.hadoop.yarn.service.component.instance.ComponentInstanceId;
 import org.apache.hadoop.yarn.service.conf.YarnServiceConf;
+import org.apache.hadoop.yarn.service.monitor.ComponentHealthThresholdMonitor;
 import org.apache.hadoop.yarn.service.monitor.probe.MonitorUtils;
 import org.apache.hadoop.yarn.service.monitor.probe.Probe;
+import org.apache.hadoop.yarn.service.containerlaunch.ContainerLaunchService;
 import org.apache.hadoop.yarn.service.provider.ProviderUtils;
 import org.apache.hadoop.yarn.service.utils.ServiceUtils;
 import org.apache.hadoop.yarn.state.InvalidStateTransitionException;
@@ -70,6 +78,8 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -77,12 +87,11 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import static org.apache.hadoop.yarn.api.records.ContainerExitStatus.*;
 import static org.apache.hadoop.yarn.service.api.ServiceApiConstants.*;
 import static org.apache.hadoop.yarn.service.component.ComponentEventType.*;
+import static org.apache.hadoop.yarn.service.component.ComponentEventType.CANCEL_UPGRADE;
+import static org.apache.hadoop.yarn.service.component.ComponentEventType.UPGRADE;
 import static org.apache.hadoop.yarn.service.component.ComponentState.*;
 import static org.apache.hadoop.yarn.service.component.instance.ComponentInstanceEventType.*;
-import static org.apache.hadoop.yarn.service.conf.YarnServiceConf.CONTAINER_FAILURE_THRESHOLD;
-import static org.apache.hadoop.yarn.service.conf.YarnServiceConf.DEFAULT_CONTAINER_FAILURE_THRESHOLD;
-import static org.apache.hadoop.yarn.service.conf.YarnServiceConf.DEFAULT_READINESS_CHECK_ENABLED;
-import static org.apache.hadoop.yarn.service.conf.YarnServiceConf.DEFAULT_READINESS_CHECK_ENABLED_DEFAULT;
+import static org.apache.hadoop.yarn.service.conf.YarnServiceConf.*;
 
 public class Component implements EventHandler<ComponentEvent> {
   private static final Logger LOG = LoggerFactory.getLogger(Component.class);
@@ -109,6 +118,17 @@ public class Component implements EventHandler<ComponentEvent> {
   // disk_failed containers etc. This will be reset to 0 periodically.
   public AtomicInteger currentContainerFailure = new AtomicInteger(0);
 
+  //succeeded and Failed instances are Populated only for RestartPolicyEnum
+  //.ON_FAILURE/NEVER
+  private Map<String, ComponentInstance> succeededInstances =
+      new ConcurrentHashMap<>();
+  private Map<String, ComponentInstance> failedInstances =
+      new ConcurrentHashMap<>();
+  private boolean healthThresholdMonitorEnabled = false;
+
+  private UpgradeStatus upgradeStatus = new UpgradeStatus();
+  private UpgradeStatus cancelUpgradeStatus = new UpgradeStatus();
+
   private StateMachine<ComponentState, ComponentEventType, ComponentEvent>
       stateMachine;
   private AsyncDispatcher dispatcher;
@@ -131,7 +151,7 @@ public class Component implements EventHandler<ComponentEvent> {
           .addTransition(FLEXING, FLEXING, CONTAINER_ALLOCATED,
               new ContainerAllocatedTransition())
           // container launched on NM
-          .addTransition(FLEXING, EnumSet.of(STABLE, FLEXING),
+          .addTransition(FLEXING, EnumSet.of(STABLE, FLEXING, UPGRADING),
               CONTAINER_STARTED, new ContainerStartedTransition())
           // container failed while flexing
           .addTransition(FLEXING, FLEXING, CONTAINER_COMPLETED,
@@ -139,6 +159,8 @@ public class Component implements EventHandler<ComponentEvent> {
           // Flex while previous flex is still in progress
           .addTransition(FLEXING, EnumSet.of(FLEXING, STABLE), FLEX,
               new FlexComponentTransition())
+          .addTransition(FLEXING, EnumSet.of(UPGRADING, FLEXING, STABLE),
+              CHECK_STABLE, new CheckStableTransition())
 
           // container failed while stable
           .addTransition(STABLE, FLEXING, CONTAINER_COMPLETED,
@@ -152,11 +174,27 @@ public class Component implements EventHandler<ComponentEvent> {
           .addTransition(STABLE, EnumSet.of(STABLE, FLEXING),
               FLEX, new FlexComponentTransition())
           .addTransition(STABLE, UPGRADING, UPGRADE,
-              new ComponentNeedsUpgradeTransition())
-          .addTransition(FLEXING, UPGRADING, UPGRADE,
-              new ComponentNeedsUpgradeTransition())
-          .addTransition(UPGRADING, UPGRADING, UPGRADE,
-              new ComponentNeedsUpgradeTransition())
+              new NeedsUpgradeTransition())
+          .addTransition(STABLE, CANCEL_UPGRADING, CANCEL_UPGRADE,
+              new NeedsUpgradeTransition())
+          .addTransition(STABLE, EnumSet.of(STABLE), CHECK_STABLE,
+              new CheckStableTransition())
+
+          // Cancel upgrade while previous upgrade is still in progress
+          .addTransition(UPGRADING, CANCEL_UPGRADING,
+              CANCEL_UPGRADE, new NeedsUpgradeTransition())
+          .addTransition(UPGRADING, EnumSet.of(UPGRADING, STABLE),
+              CHECK_STABLE, new CheckStableTransition())
+          .addTransition(UPGRADING, UPGRADING, CONTAINER_COMPLETED,
+              new CompletedAfterUpgradeTransition())
+
+          .addTransition(CANCEL_UPGRADING, EnumSet.of(CANCEL_UPGRADING, FLEXING,
+              STABLE), CHECK_STABLE, new CheckStableTransition())
+          .addTransition(CANCEL_UPGRADING, CANCEL_UPGRADING,
+              CONTAINER_COMPLETED, new CompletedAfterUpgradeTransition())
+          .addTransition(CANCEL_UPGRADING, FLEXING, CONTAINER_ALLOCATED,
+              new ContainerAllocatedTransition())
+
           .installTopology();
 
   public Component(
@@ -190,6 +228,7 @@ public class Component implements EventHandler<ComponentEvent> {
         componentSpec.getConfiguration(), scheduler.getConfig());
     createNumCompInstances(component.getNumberOfContainers());
     setDesiredContainers(component.getNumberOfContainers().intValue());
+    checkAndScheduleHealthThresholdMonitor();
   }
 
   private void createNumCompInstances(long count) {
@@ -207,6 +246,73 @@ public class Component implements EventHandler<ComponentEvent> {
     pendingInstances.add(instance);
   }
 
+  private void checkAndScheduleHealthThresholdMonitor() {
+    // Determine health threshold percent
+    int healthThresholdPercent = YarnServiceConf.getInt(
+        CONTAINER_HEALTH_THRESHOLD_PERCENT,
+        DEFAULT_CONTAINER_HEALTH_THRESHOLD_PERCENT,
+        componentSpec.getConfiguration(), scheduler.getConfig());
+    // Validations
+    if (healthThresholdPercent == CONTAINER_HEALTH_THRESHOLD_PERCENT_DISABLED) {
+      LOG.info("No health threshold monitor enabled for component {}",
+          componentSpec.getName());
+      return;
+    }
+    // If threshold is set to outside acceptable range then don't enable monitor
+    if (healthThresholdPercent <= 0 || healthThresholdPercent > 100) {
+      LOG.error(
+          "Invalid health threshold percent {}% for component {}. Monitor not "
+              + "enabled.",
+          healthThresholdPercent, componentSpec.getName());
+      return;
+    }
+    // Determine the threshold properties
+    long window = YarnServiceConf.getLong(CONTAINER_HEALTH_THRESHOLD_WINDOW_SEC,
+        DEFAULT_CONTAINER_HEALTH_THRESHOLD_WINDOW_SEC,
+        componentSpec.getConfiguration(), scheduler.getConfig());
+    long initDelay = YarnServiceConf.getLong(
+        CONTAINER_HEALTH_THRESHOLD_INIT_DELAY_SEC,
+        DEFAULT_CONTAINER_HEALTH_THRESHOLD_INIT_DELAY_SEC,
+        componentSpec.getConfiguration(), scheduler.getConfig());
+    long pollFrequency = YarnServiceConf.getLong(
+        CONTAINER_HEALTH_THRESHOLD_POLL_FREQUENCY_SEC,
+        DEFAULT_CONTAINER_HEALTH_THRESHOLD_POLL_FREQUENCY_SEC,
+        componentSpec.getConfiguration(), scheduler.getConfig());
+    // Validations
+    if (window <= 0) {
+      LOG.error(
+          "Invalid health monitor window {} secs for component {}. Monitor not "
+              + "enabled.",
+          window, componentSpec.getName());
+      return;
+    }
+    if (initDelay < 0) {
+      LOG.error("Invalid health monitor init delay {} secs for component {}. "
+          + "Monitor not enabled.", initDelay, componentSpec.getName());
+      return;
+    }
+    if (pollFrequency <= 0) {
+      LOG.error(
+          "Invalid health monitor poll frequency {} secs for component {}. "
+              + "Monitor not enabled.",
+          pollFrequency, componentSpec.getName());
+      return;
+    }
+    LOG.info(
+        "Scheduling the health threshold monitor for component {} with percent "
+            + "= {}%, window = {} secs, poll freq = {} secs, init-delay = {} "
+            + "secs",
+        componentSpec.getName(), healthThresholdPercent, window, pollFrequency,
+        initDelay);
+    // Add 3 extra seconds to initial delay to account for the time taken to
+    // request containers before the monitor starts calculating health.
+    this.scheduler.executorService.scheduleAtFixedRate(
+        new ComponentHealthThresholdMonitor(this, healthThresholdPercent,
+            window),
+        initDelay + 3, pollFrequency, TimeUnit.SECONDS);
+    setHealthThresholdMonitorEnabled(true);
+  }
+
   private static class FlexComponentTransition implements
       MultipleArcTransition<Component, ComponentEvent, ComponentState> {
     // For flex up, go to FLEXING state
@@ -214,7 +320,7 @@ public class Component implements EventHandler<ComponentEvent> {
     @Override
     public ComponentState transition(Component component,
         ComponentEvent event) {
-      component.setDesiredContainers((int)event.getDesired());
+      component.setDesiredContainers((int) event.getDesired());
       if (!component.areDependenciesReady()) {
         LOG.info("[FLEX COMPONENT {}]: Flex deferred because dependencies not"
             + " satisfied.", component.getName());
@@ -236,11 +342,11 @@ public class Component implements EventHandler<ComponentEvent> {
                 + before + " to " + event.getDesired());
         component.requestContainers(delta);
         component.createNumCompInstances(delta);
-        component.componentSpec.setState(
+        component.setComponentState(
             org.apache.hadoop.yarn.service.api.records.ComponentState.FLEXING);
         component.getScheduler().getApp().setState(ServiceState.STARTED);
         return FLEXING;
-      } else if (delta < 0){
+      } else if (delta < 0) {
         delta = 0 - delta;
         // scale down
         LOG.info("[FLEX DOWN COMPONENT " + component.getName()
@@ -260,7 +366,9 @@ public class Component implements EventHandler<ComponentEvent> {
           instance.destroy();
         }
         checkAndUpdateComponentState(component, false);
-        return STABLE;
+        return component.componentSpec.getState()
+            == org.apache.hadoop.yarn.service.api.records.ComponentState.STABLE
+                ? STABLE : FLEXING;
       } else {
         LOG.info("[FLEX COMPONENT " + component.getName() + "]: already has " +
             event.getDesired() + " instances, ignoring");
@@ -291,7 +399,10 @@ public class Component implements EventHandler<ComponentEvent> {
 
       component.pendingInstances.remove(instance);
       instance.setContainer(container);
-      ProviderUtils.initCompInstanceDir(component.getContext().fs, instance);
+
+      ProviderUtils.initCompInstanceDir(component.getContext().fs,
+          component.createLaunchContext(component.componentSpec,
+              component.scheduler.getApp().getVersion()), instance);
       component.getScheduler().addLiveCompInstance(container.getId(), instance);
       LOG.info("[COMPONENT {}]: Recovered {} for component instance {} on " +
               "host {}, num pending component instances reduced to {} ",
@@ -314,78 +425,188 @@ public class Component implements EventHandler<ComponentEvent> {
     }
   }
 
-  private static ComponentState checkIfStable(Component component) {
-    // if desired == running
-    if (component.componentMetrics.containersReady.value() == component
-        .getComponentSpec().getNumberOfContainers()) {
-      component.componentSpec.setState(
+  @VisibleForTesting
+  static ComponentState checkIfStable(Component component) {
+    if (component.getRestartPolicyHandler().isLongLived()) {
+      return updateStateForLongRunningComponents(component);
+    } else{
+      //NEVER/ON_FAILURE
+      return updateStateForTerminatingComponents(component);
+    }
+  }
+
+  private static ComponentState updateStateForTerminatingComponents(
+      Component component) {
+    if (component.getNumRunningInstances() + component
+        .getNumSucceededInstances() + component.getNumFailedInstances()
+        < component.getComponentSpec().getNumberOfContainers()) {
+      component.setComponentState(
+          org.apache.hadoop.yarn.service.api.records.ComponentState.FLEXING);
+      return FLEXING;
+    } else{
+      component.setComponentState(
           org.apache.hadoop.yarn.service.api.records.ComponentState.STABLE);
       return STABLE;
-    } else {
-      component.componentSpec.setState(
+    }
+  }
+
+  private static ComponentState updateStateForLongRunningComponents(
+      Component component) {
+    // if desired == running
+    if (component.componentMetrics.containersReady.value() == component
+        .getComponentSpec().getNumberOfContainers() &&
+        !component.doesNeedUpgrade()) {
+      component.setComponentState(
+          org.apache.hadoop.yarn.service.api.records.ComponentState.STABLE);
+      return STABLE;
+    } else if (component.doesNeedUpgrade()) {
+      component.setComponentState(org.apache.hadoop.yarn.service.api.records.
+          ComponentState.NEEDS_UPGRADE);
+      return component.getState();
+    } else if (component.componentMetrics.containersReady.value() != component
+        .getComponentSpec().getNumberOfContainers()) {
+      component.setComponentState(
           org.apache.hadoop.yarn.service.api.records.ComponentState.FLEXING);
       return FLEXING;
     }
+    return component.getState();
   }
 
   // This method should be called whenever there is an increment or decrement
   // of a READY state container of a component
-  public static synchronized void checkAndUpdateComponentState(
+  //This should not matter for terminating components
+  private static synchronized void checkAndUpdateComponentState(
       Component component, boolean isIncrement) {
-    org.apache.hadoop.yarn.service.api.records.ComponentState curState =
-        component.componentSpec.getState();
-    if (isIncrement) {
-      // check if all containers are in READY state
-      if (component.componentMetrics.containersReady
-          .value() == component.componentMetrics.containersDesired.value()) {
-        component.componentSpec.setState(
-            org.apache.hadoop.yarn.service.api.records.ComponentState.STABLE);
-        if (curState != component.componentSpec.getState()) {
-          LOG.info("[COMPONENT {}] state changed from {} -> {}",
-              component.componentSpec.getName(), curState,
-              component.componentSpec.getState());
+
+    if (component.getRestartPolicyHandler().isLongLived()) {
+      if (isIncrement) {
+        // check if all containers are in READY state
+        if (!component.upgradeStatus.areContainersUpgrading() &&
+            !component.cancelUpgradeStatus.areContainersUpgrading() &&
+            component.componentMetrics.containersReady.value() ==
+                component.componentMetrics.containersDesired.value()) {
+          component.setComponentState(
+              org.apache.hadoop.yarn.service.api.records.ComponentState.STABLE);
+          // component state change will trigger re-check of service state
+          component.context.getServiceManager().checkAndUpdateServiceState();
+        }
+      } else{
+        // container moving out of READY state could be because of FLEX down so
+        // still need to verify the count before changing the component state
+        if (component.componentMetrics.containersReady.value()
+            < component.componentMetrics.containersDesired.value()) {
+          component.setComponentState(
+              org.apache.hadoop.yarn.service.api.records.ComponentState
+                  .FLEXING);
+        } else if (component.componentMetrics.containersReady.value()
+            == component.componentMetrics.containersDesired.value()) {
+          component.setComponentState(
+              org.apache.hadoop.yarn.service.api.records.ComponentState.STABLE);
         }
         // component state change will trigger re-check of service state
-        ServiceMaster.checkAndUpdateServiceState(component.scheduler,
-            isIncrement);
+        component.context.getServiceManager().checkAndUpdateServiceState();
       }
     } else {
-      // container moving out of READY state could be because of FLEX down so
-      // still need to verify the count before changing the component state
-      if (component.componentMetrics.containersReady
-          .value() < component.componentMetrics.containersDesired.value()) {
-        component.componentSpec.setState(
-            org.apache.hadoop.yarn.service.api.records.ComponentState.FLEXING);
-        if (curState != component.componentSpec.getState()) {
-          LOG.info("[COMPONENT {}] state changed from {} -> {}",
-              component.componentSpec.getName(), curState,
-              component.componentSpec.getState());
-        }
-        // component state change will trigger re-check of service state
-        ServiceMaster.checkAndUpdateServiceState(component.scheduler,
-            isIncrement);
-      }
+      // component state change will trigger re-check of service state
+      component.context.getServiceManager().checkAndUpdateServiceState();
     }
+    // triggers the state machine in component to reach appropriate state
+    // once the state in spec is changed.
+    component.dispatcher.getEventHandler().handle(
+        new ComponentEvent(component.getName(),
+            ComponentEventType.CHECK_STABLE));
   }
 
   private static class ContainerCompletedTransition extends BaseTransition {
     @Override
     public void transition(Component component, ComponentEvent event) {
+      Preconditions.checkNotNull(event.getContainerId());
       component.updateMetrics(event.getStatus());
       component.dispatcher.getEventHandler().handle(
-          new ComponentInstanceEvent(event.getStatus().getContainerId(),
-              STOP).setStatus(event.getStatus()));
-      component.componentSpec.setState(
-          org.apache.hadoop.yarn.service.api.records.ComponentState.FLEXING);
-      component.getScheduler().getApp().setState(ServiceState.STARTED);
+          new ComponentInstanceEvent(event.getContainerId(), STOP)
+              .setStatus(event.getStatus()));
+
+      ComponentRestartPolicy restartPolicy =
+          component.getRestartPolicyHandler();
+
+      if (restartPolicy.shouldRelaunchInstance(event.getInstance(),
+          event.getStatus())) {
+        component.componentSpec.setState(
+            org.apache.hadoop.yarn.service.api.records.ComponentState.FLEXING);
+
+        if (component.context.service.getState().equals(ServiceState.STABLE)) {
+          component.getScheduler().getApp().setState(ServiceState.STARTED);
+          LOG.info("Service def state changed from {} -> {}",
+              ServiceState.STABLE, ServiceState.STARTED);
+        }
+      }
     }
   }
 
-  private static class ComponentNeedsUpgradeTransition extends BaseTransition {
+  private static class CompletedAfterUpgradeTransition extends BaseTransition {
     @Override
     public void transition(Component component, ComponentEvent event) {
-      component.componentSpec.setState(org.apache.hadoop.yarn.service.api.
+      Preconditions.checkNotNull(event.getContainerId());
+      component.updateMetrics(event.getStatus());
+      component.dispatcher.getEventHandler().handle(
+          new ComponentInstanceEvent(event.getContainerId(), STOP)
+              .setStatus(event.getStatus()));
+    }
+  }
+
+  private static class NeedsUpgradeTransition extends BaseTransition {
+    @Override
+    public void transition(Component component, ComponentEvent event) {
+      boolean isCancel = event.getType().equals(CANCEL_UPGRADE);
+      UpgradeStatus status = !isCancel ? component.upgradeStatus :
+          component.cancelUpgradeStatus;
+
+      status.inProgress.set(true);
+      status.targetSpec = event.getTargetSpec();
+      status.targetVersion = event.getUpgradeVersion();
+      LOG.info("[COMPONENT {}]: need upgrade to {}",
+          component.getName(), status.targetVersion);
+
+      status.containersNeedUpgrade.set(
+          component.componentSpec.getNumberOfContainers());
+
+      component.setComponentState(org.apache.hadoop.yarn.service.api.
           records.ComponentState.NEEDS_UPGRADE);
+
+      component.getAllComponentInstances().forEach(instance -> {
+        instance.setContainerState(ContainerState.NEEDS_UPGRADE);
+      });
+
+      if (event.getType().equals(CANCEL_UPGRADE)) {
+        component.upgradeStatus.reset();
+      }
+    }
+  }
+
+  private static class CheckStableTransition implements MultipleArcTransition
+      <Component, ComponentEvent, ComponentState> {
+
+    @Override
+    public ComponentState transition(Component component,
+        ComponentEvent componentEvent) {
+      // checkIfStable also updates the state in definition when STABLE
+      ComponentState targetState = checkIfStable(component);
+
+      if (targetState.equals(STABLE) &&
+          !(component.upgradeStatus.isCompleted() &&
+              component.cancelUpgradeStatus.isCompleted())) {
+        // Component stable after upgrade or cancel upgrade
+        UpgradeStatus status = !component.cancelUpgradeStatus.isCompleted() ?
+            component.cancelUpgradeStatus : component.upgradeStatus;
+
+        component.componentSpec.overwrite(status.getTargetSpec());
+        status.reset();
+
+        ServiceEvent checkStable = new ServiceEvent(ServiceEventType.
+            CHECK_STABLE);
+        component.dispatcher.getEventHandler().handle(checkStable);
+      }
+      return targetState;
     }
   }
 
@@ -421,8 +642,32 @@ public class Component implements EventHandler<ComponentEvent> {
         "[COMPONENT {}]: Assigned {} to component instance {} and launch on host {} ",
         getName(), container.getId(), instance.getCompInstanceName(),
         container.getNodeId());
-    scheduler.getContainerLaunchService()
-        .launchCompInstance(scheduler.getApp(), instance, container);
+    if (!(upgradeStatus.isCompleted() && cancelUpgradeStatus.isCompleted())) {
+      UpgradeStatus status = !cancelUpgradeStatus.isCompleted() ?
+          cancelUpgradeStatus : upgradeStatus;
+
+      scheduler.getContainerLaunchService()
+          .launchCompInstance(scheduler.getApp(), instance, container,
+              createLaunchContext(status.getTargetSpec(),
+                  status.getTargetVersion()));
+    } else {
+      scheduler.getContainerLaunchService().launchCompInstance(
+          scheduler.getApp(), instance, container,
+          createLaunchContext(componentSpec, scheduler.getApp().getVersion()));
+    }
+  }
+
+  public ContainerLaunchService.ComponentLaunchContext createLaunchContext(
+      org.apache.hadoop.yarn.service.api.records.Component compSpec,
+      String version) {
+    ContainerLaunchService.ComponentLaunchContext launchContext =
+        new ContainerLaunchService.ComponentLaunchContext(compSpec.getName(),
+            version);
+    launchContext.setArtifact(compSpec.getArtifact())
+        .setConfiguration(compSpec.getConfiguration())
+        .setLaunchCommand(compSpec.getLaunchCommand())
+        .setRunPrivilegedContainer(compSpec.getRunPrivilegedContainer());
+    return launchContext;
   }
 
   @SuppressWarnings({ "unchecked" })
@@ -481,62 +726,66 @@ public class Component implements EventHandler<ComponentEvent> {
       // composite constraints then this AND-ed composite constraint is not
       // used.
       PlacementConstraint finalConstraint = null;
-      for (org.apache.hadoop.yarn.service.api.records.PlacementConstraint
-          yarnServiceConstraint : placementPolicy.getConstraints()) {
-        List<TargetExpression> targetExpressions = new ArrayList<>();
-        // Currently only intra-application allocation tags are supported.
-        if (!yarnServiceConstraint.getTargetTags().isEmpty()) {
-          targetExpressions.add(PlacementTargets.allocationTag(
-              yarnServiceConstraint.getTargetTags().toArray(new String[0])));
+      if (placementPolicy != null) {
+        for (org.apache.hadoop.yarn.service.api.records.PlacementConstraint
+            yarnServiceConstraint : placementPolicy.getConstraints()) {
+          List<TargetExpression> targetExpressions = new ArrayList<>();
+          // Currently only intra-application allocation tags are supported.
+          if (!yarnServiceConstraint.getTargetTags().isEmpty()) {
+            targetExpressions.add(PlacementTargets.allocationTag(
+                yarnServiceConstraint.getTargetTags().toArray(new String[0])));
+          }
+          // Add all node attributes
+          for (Map.Entry<String, List<String>> attribute : yarnServiceConstraint
+              .getNodeAttributes().entrySet()) {
+            targetExpressions
+                .add(PlacementTargets.nodeAttribute(attribute.getKey(),
+                    attribute.getValue().toArray(new String[0])));
+          }
+          // Add all node partitions
+          if (!yarnServiceConstraint.getNodePartitions().isEmpty()) {
+            targetExpressions
+                .add(PlacementTargets.nodePartition(yarnServiceConstraint
+                    .getNodePartitions().toArray(new String[0])));
+          }
+          PlacementConstraint constraint = null;
+          switch (yarnServiceConstraint.getType()) {
+          case AFFINITY:
+            constraint = PlacementConstraints
+                .targetIn(yarnServiceConstraint.getScope().getValue(),
+                    targetExpressions.toArray(new TargetExpression[0]))
+                .build();
+            break;
+          case ANTI_AFFINITY:
+            constraint = PlacementConstraints
+                .targetNotIn(yarnServiceConstraint.getScope().getValue(),
+                    targetExpressions.toArray(new TargetExpression[0]))
+                .build();
+            break;
+          case AFFINITY_WITH_CARDINALITY:
+            constraint = PlacementConstraints.targetCardinality(
+                yarnServiceConstraint.getScope().name().toLowerCase(),
+                yarnServiceConstraint.getMinCardinality() == null ? 0
+                    : yarnServiceConstraint.getMinCardinality().intValue(),
+                yarnServiceConstraint.getMaxCardinality() == null
+                    ? Integer.MAX_VALUE
+                    : yarnServiceConstraint.getMaxCardinality().intValue(),
+                targetExpressions.toArray(new TargetExpression[0])).build();
+            break;
+          }
+          // The default AND-ed final composite constraint
+          if (finalConstraint != null) {
+            finalConstraint = PlacementConstraints
+                .and(constraint.getConstraintExpr(),
+                    finalConstraint.getConstraintExpr())
+                .build();
+          } else {
+            finalConstraint = constraint;
+          }
+          LOG.debug("[COMPONENT {}] Placement constraint: {}",
+              componentSpec.getName(),
+              constraint.getConstraintExpr().toString());
         }
-        // Add all node attributes
-        for (Map.Entry<String, List<String>> attribute : yarnServiceConstraint
-            .getNodeAttributes().entrySet()) {
-          targetExpressions.add(PlacementTargets.nodeAttribute(
-              attribute.getKey(), attribute.getValue().toArray(new String[0])));
-        }
-        // Add all node partitions
-        if (!yarnServiceConstraint.getNodePartitions().isEmpty()) {
-          targetExpressions
-              .add(PlacementTargets.nodePartition(yarnServiceConstraint
-                  .getNodePartitions().toArray(new String[0])));
-        }
-        PlacementConstraint constraint = null;
-        switch (yarnServiceConstraint.getType()) {
-        case AFFINITY:
-          constraint = PlacementConstraints
-              .targetIn(yarnServiceConstraint.getScope().getValue(),
-                  targetExpressions.toArray(new TargetExpression[0]))
-              .build();
-          break;
-        case ANTI_AFFINITY:
-          constraint = PlacementConstraints
-              .targetNotIn(yarnServiceConstraint.getScope().getValue(),
-                  targetExpressions.toArray(new TargetExpression[0]))
-              .build();
-          break;
-        case AFFINITY_WITH_CARDINALITY:
-          constraint = PlacementConstraints.targetCardinality(
-              yarnServiceConstraint.getScope().name().toLowerCase(),
-              yarnServiceConstraint.getMinCardinality() == null ? 0
-                  : yarnServiceConstraint.getMinCardinality().intValue(),
-              yarnServiceConstraint.getMaxCardinality() == null
-                  ? Integer.MAX_VALUE
-                  : yarnServiceConstraint.getMaxCardinality().intValue(),
-              targetExpressions.toArray(new TargetExpression[0])).build();
-          break;
-        }
-        // The default AND-ed final composite constraint
-        if (finalConstraint != null) {
-          finalConstraint = PlacementConstraints
-              .and(constraint.getConstraintExpr(),
-                  finalConstraint.getConstraintExpr())
-              .build();
-        } else {
-          finalConstraint = constraint;
-        }
-        LOG.debug("[COMPONENT {}] Placement constraint: {}",
-            componentSpec.getName(), constraint.getConstraintExpr().toString());
       }
       ResourceSizing resourceSizing = ResourceSizing.newInstance((int) count,
           resource);
@@ -566,36 +815,45 @@ public class Component implements EventHandler<ComponentEvent> {
     componentMetrics.containersDesired.set(n);
   }
 
-
-
   private void updateMetrics(ContainerStatus status) {
-    switch (status.getExitStatus()) {
-    case SUCCESS:
-      componentMetrics.containersSucceeded.incr();
-      scheduler.getServiceMetrics().containersSucceeded.incr();
-      return;
-    case PREEMPTED:
-      componentMetrics.containersPreempted.incr();
-      scheduler.getServiceMetrics().containersPreempted.incr();
-      break;
-    case DISKS_FAILED:
-      componentMetrics.containersDiskFailure.incr();
-      scheduler.getServiceMetrics().containersDiskFailure.incr();
-      break;
-    default:
-      break;
+    //when a container preparation fails while building launch context, then
+    //the container status may not exist.
+    if (status != null) {
+      switch (status.getExitStatus()) {
+        case SUCCESS:
+          componentMetrics.containersSucceeded.incr();
+          scheduler.getServiceMetrics().containersSucceeded.incr();
+          return;
+        case PREEMPTED:
+          componentMetrics.containersPreempted.incr();
+          scheduler.getServiceMetrics().containersPreempted.incr();
+          break;
+        case DISKS_FAILED:
+          componentMetrics.containersDiskFailure.incr();
+          scheduler.getServiceMetrics().containersDiskFailure.incr();
+          break;
+        default:
+          break;
+      }
     }
 
     // containersFailed include preempted, disks_failed etc.
     componentMetrics.containersFailed.incr();
     scheduler.getServiceMetrics().containersFailed.incr();
 
-    if (Apps.shouldCountTowardsNodeBlacklisting(status.getExitStatus())) {
+    if (status != null && Apps.shouldCountTowardsNodeBlacklisting(
+        status.getExitStatus())) {
       String host = scheduler.getLiveInstances().get(status.getContainerId())
           .getNodeId().getHost();
       failureTracker.incNodeFailure(host);
-      currentContainerFailure.getAndIncrement() ;
+      currentContainerFailure.getAndIncrement();
     }
+  }
+
+  private boolean doesNeedUpgrade() {
+    return cancelUpgradeStatus.areContainersUpgrading() ||
+        upgradeStatus.areContainersUpgrading() ||
+        upgradeStatus.failed.get();
   }
 
   public boolean areDependenciesReady() {
@@ -604,17 +862,18 @@ public class Component implements EventHandler<ComponentEvent> {
       return true;
     }
     for (String dependency : dependencies) {
-      Component dependentComponent =
-          scheduler.getAllComponents().get(dependency);
+      Component dependentComponent = scheduler.getAllComponents().get(
+          dependency);
       if (dependentComponent == null) {
         LOG.error("Couldn't find dependency {} for {} (should never happen)",
             dependency, getName());
         continue;
       }
-      if (dependentComponent.getNumReadyInstances() < dependentComponent
-          .getNumDesiredInstances()) {
+
+      if (!dependentComponent.isReadyForDownstream()) {
         LOG.info("[COMPONENT {}]: Dependency {} not satisfied, only {} of {}"
-                + " instances are ready.", getName(), dependency,
+                + " instances are ready or the dependent component has not "
+                + "completed ", getName(), dependency,
             dependentComponent.getNumReadyInstances(),
             dependentComponent.getNumDesiredInstances());
         return false;
@@ -622,6 +881,7 @@ public class Component implements EventHandler<ComponentEvent> {
     }
     return true;
   }
+
 
   public Map<String, String> getDependencyHostIpTokens() {
     Map<String, String> tokens = new HashMap<>();
@@ -661,16 +921,20 @@ public class Component implements EventHandler<ComponentEvent> {
     scheduler.getServiceMetrics().containersRunning.decr();
   }
 
-  public void incContainersReady() {
+  public void incContainersReady(boolean updateDefinition) {
     componentMetrics.containersReady.incr();
     scheduler.getServiceMetrics().containersReady.incr();
-    checkAndUpdateComponentState(this, true);
+    if (updateDefinition) {
+      checkAndUpdateComponentState(this, true);
+    }
   }
 
-  public void decContainersReady() {
+  public void decContainersReady(boolean updateDefinition) {
     componentMetrics.containersReady.decr();
     scheduler.getServiceMetrics().containersReady.decr();
-    checkAndUpdateComponentState(this, false);
+    if (updateDefinition) {
+      checkAndUpdateComponentState(this, false);
+    }
   }
 
   public int getNumReadyInstances() {
@@ -729,6 +993,39 @@ public class Component implements EventHandler<ComponentEvent> {
       this.readLock.unlock();
     }
   }
+
+  /**
+   * Returns whether a component is upgrading or not.
+   */
+  public boolean isUpgrading() {
+    this.readLock.lock();
+
+    try {
+      return !(upgradeStatus.isCompleted() &&
+          cancelUpgradeStatus.isCompleted());
+    } finally {
+      this.readLock.unlock();
+    }
+  }
+
+  public UpgradeStatus getUpgradeStatus() {
+    this.readLock.lock();
+    try {
+      return upgradeStatus;
+    } finally {
+      this.readLock.unlock();
+    }
+  }
+
+  public UpgradeStatus getCancelUpgradeStatus() {
+    this.readLock.lock();
+    try {
+      return cancelUpgradeStatus;
+    } finally {
+      this.readLock.unlock();
+    }
+  }
+
   public ServiceScheduler getScheduler() {
     return scheduler;
   }
@@ -761,6 +1058,70 @@ public class Component implements EventHandler<ComponentEvent> {
     }
   }
 
+  /**
+   * Sets the state of the component in the component spec.
+   * @param state component state
+   */
+  private void setComponentState(
+      org.apache.hadoop.yarn.service.api.records.ComponentState state) {
+    org.apache.hadoop.yarn.service.api.records.ComponentState curState =
+        componentSpec.getState();
+    if (!curState.equals(state)) {
+      componentSpec.setState(state);
+      LOG.info("[COMPONENT {}] spec state changed from {} -> {}",
+          componentSpec.getName(), curState, state);
+    }
+  }
+
+  /**
+   * Status of upgrade.
+   */
+  public static class UpgradeStatus {
+    private org.apache.hadoop.yarn.service.api.records.Component targetSpec;
+    private String targetVersion;
+    private AtomicBoolean inProgress = new AtomicBoolean(false);
+    private AtomicLong containersNeedUpgrade = new AtomicLong(0);
+    private AtomicBoolean failed = new AtomicBoolean(false);
+
+    public org.apache.hadoop.yarn.service.api.records.
+        Component getTargetSpec() {
+      return targetSpec;
+    }
+
+    public String getTargetVersion() {
+      return targetVersion;
+    }
+
+    /*
+     * @return whether the upgrade is completed or not
+     */
+    public boolean isCompleted() {
+      return !inProgress.get();
+    }
+
+    public void decContainersThatNeedUpgrade() {
+      if (inProgress.get()) {
+        containersNeedUpgrade.decrementAndGet();
+      }
+    }
+
+    public void containerFailedUpgrade() {
+      failed.set(true);
+    }
+
+    void reset() {
+      containersNeedUpgrade.set(0);
+      targetSpec = null;
+      targetVersion = null;
+      inProgress.set(false);
+      failed.set(false);
+    }
+
+    boolean areContainersUpgrading() {
+      return containersNeedUpgrade.get() != 0;
+    }
+  }
+
   public ServiceContext getContext() {
     return context;
   }
@@ -768,5 +1129,77 @@ public class Component implements EventHandler<ComponentEvent> {
   // Only for testing
   public List<ComponentInstance> getPendingInstances() {
     return pendingInstances;
+  }
+
+  public boolean isHealthThresholdMonitorEnabled() {
+    return healthThresholdMonitorEnabled;
+  }
+
+  public void setHealthThresholdMonitorEnabled(
+      boolean healthThresholdMonitorEnabled) {
+    this.healthThresholdMonitorEnabled = healthThresholdMonitorEnabled;
+  }
+
+  public Collection<ComponentInstance> getSucceededInstances() {
+    return succeededInstances.values();
+  }
+
+  public long getNumSucceededInstances() {
+    return succeededInstances.size();
+  }
+
+  public long getNumFailedInstances() {
+    return failedInstances.size();
+  }
+
+  public Collection<ComponentInstance> getFailedInstances() {
+    return failedInstances.values();
+  }
+
+  public synchronized void markAsSucceeded(ComponentInstance instance) {
+    removeFailedInstanceIfExists(instance);
+    succeededInstances.put(instance.getCompInstanceName(), instance);
+  }
+
+  public synchronized void markAsFailed(ComponentInstance instance) {
+    removeSuccessfulInstanceIfExists(instance);
+    failedInstances.put(instance.getCompInstanceName(), instance);
+  }
+
+  public boolean removeFailedInstanceIfExists(ComponentInstance instance) {
+    if (failedInstances.containsKey(instance.getCompInstanceName())) {
+      failedInstances.remove(instance.getCompInstanceName());
+      return true;
+    }
+    return false;
+  }
+
+  public boolean removeSuccessfulInstanceIfExists(ComponentInstance instance) {
+    if (succeededInstances.containsKey(instance.getCompInstanceName())) {
+      succeededInstances.remove(instance.getCompInstanceName());
+      return true;
+    }
+    return false;
+  }
+
+  public boolean isReadyForDownstream() {
+    return getRestartPolicyHandler().isReadyForDownStream(this);
+  }
+
+  public static ComponentRestartPolicy getRestartPolicyHandler(
+      RestartPolicyEnum restartPolicyEnum) {
+
+    if (RestartPolicyEnum.NEVER == restartPolicyEnum) {
+      return NeverRestartPolicy.getInstance();
+    } else if (RestartPolicyEnum.ON_FAILURE == restartPolicyEnum) {
+      return OnFailureRestartPolicy.getInstance();
+    } else{
+      return AlwaysRestartPolicy.getInstance();
+    }
+  }
+
+  public ComponentRestartPolicy getRestartPolicyHandler() {
+    RestartPolicyEnum restartPolicyEnum = getComponentSpec().getRestartPolicy();
+    return getRestartPolicyHandler(restartPolicyEnum);
   }
 }

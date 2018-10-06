@@ -34,6 +34,9 @@ import org.apache.hadoop.yarn.server.nodemanager.Context;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.container.Container;
 
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.container.ContainerImpl;
+import org.apache.hadoop.yarn.server.nodemanager.containermanager.linux.resources.ResourceHandlerChain;
+import org.apache.hadoop.yarn.server.nodemanager.containermanager.linux.resources.ResourceHandlerException;
+import org.apache.hadoop.yarn.server.nodemanager.containermanager.linux.resources.ResourceHandlerModule;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.monitor
     .ChangeMonitoringContainerResourceEvent;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.container.ContainerState;
@@ -41,6 +44,9 @@ import org.apache.hadoop.yarn.server.nodemanager.containermanager.monitor.Contai
 
 
 import org.apache.hadoop.yarn.server.nodemanager.metrics.NodeManagerMetrics;
+import org.apache.hadoop.yarn.server.nodemanager.recovery.NMStateStoreService;
+import org.apache.hadoop.yarn.server.nodemanager.recovery.NMStateStoreService
+        .RecoveredContainerState;
 import org.apache.hadoop.yarn.server.nodemanager.recovery.NMStateStoreService.RecoveredContainerStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -105,6 +111,9 @@ public class ContainerScheduler extends AbstractService implements
 
   private Boolean usePauseEventForPreemption = false;
 
+  @VisibleForTesting
+  ResourceHandlerChain resourceHandlerChain = null;
+
   /**
    * Instantiate a Container Scheduler.
    * @param context NodeManager Context.
@@ -123,6 +132,24 @@ public class ContainerScheduler extends AbstractService implements
   @Override
   public void serviceInit(Configuration conf) throws Exception {
     super.serviceInit(conf);
+    try {
+      if (resourceHandlerChain == null) {
+        resourceHandlerChain = ResourceHandlerModule
+            .getConfiguredResourceHandlerChain(conf, context);
+      }
+      if (LOG.isDebugEnabled()) {
+        LOG.debug("Resource handler chain enabled = " + (resourceHandlerChain
+            != null));
+      }
+      if (resourceHandlerChain != null) {
+        LOG.debug("Bootstrapping resource handler chain");
+        resourceHandlerChain.bootstrap(conf);
+      }
+    } catch (ResourceHandlerException e) {
+      LOG.error("Failed to bootstrap configured resource subsystems! ", e);
+      throw new IOException(
+          "Failed to bootstrap configured resource subsystems!");
+    }
     this.usePauseEventForPreemption =
         conf.getBoolean(
             YarnConfiguration.NM_CONTAINER_QUEUING_USE_PAUSE_FOR_PREEMPTION,
@@ -218,6 +245,12 @@ public class ContainerScheduler extends AbstractService implements
               updateEvent.getContainer());
         }
       }
+      try {
+        resourceHandlerChain.updateContainer(updateEvent.getContainer());
+      } catch (Exception ex) {
+        LOG.warn(String.format("Could not update resources on " +
+            "continer update of %s", containerId), ex);
+      }
       startPendingContainers(maxOppQueueLength <= 0);
     }
   }
@@ -229,11 +262,11 @@ public class ContainerScheduler extends AbstractService implements
    * @param rcs Recovered Container status
    */
   public void recoverActiveContainer(Container container,
-      RecoveredContainerStatus rcs) {
+      RecoveredContainerState rcs) {
     ExecutionType execType =
         container.getContainerTokenIdentifier().getExecutionType();
-    if (rcs == RecoveredContainerStatus.QUEUED
-        || rcs == RecoveredContainerStatus.PAUSED) {
+    if (rcs.getStatus() == RecoveredContainerStatus.QUEUED
+        || rcs.getStatus() == RecoveredContainerStatus.PAUSED) {
       if (execType == ExecutionType.GUARANTEED) {
         queuedGuaranteedContainers.put(container.getContainerId(), container);
       } else if (execType == ExecutionType.OPPORTUNISTIC) {
@@ -244,9 +277,14 @@ public class ContainerScheduler extends AbstractService implements
             "UnKnown execution type received " + container.getContainerId()
                 + ", execType " + execType);
       }
-    } else if (rcs == RecoveredContainerStatus.LAUNCHED) {
+    } else if (rcs.getStatus() == RecoveredContainerStatus.LAUNCHED) {
       runningContainers.put(container.getContainerId(), container);
       utilizationTracker.addContainerResources(container);
+    }
+    if (rcs.getStatus() != RecoveredContainerStatus.COMPLETED
+            && rcs.getCapability() != null) {
+      metrics.launchedContainer();
+      metrics.allocateContainer(rcs.getCapability());
     }
   }
 

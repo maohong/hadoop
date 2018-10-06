@@ -18,6 +18,8 @@
 package org.apache.hadoop.hdfs.tools.offlineImageViewer;
 
 import com.google.common.collect.ImmutableMap;
+
+import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.HADOOP_SECURITY_AUTHENTICATION;
 import static org.apache.hadoop.fs.permission.AclEntryScope.ACCESS;
 import static org.apache.hadoop.fs.permission.AclEntryType.GROUP;
 import static org.apache.hadoop.fs.permission.AclEntryType.OTHER;
@@ -25,6 +27,8 @@ import static org.apache.hadoop.fs.permission.AclEntryType.USER;
 import static org.apache.hadoop.fs.permission.FsAction.ALL;
 import static org.apache.hadoop.fs.permission.FsAction.EXECUTE;
 import static org.apache.hadoop.fs.permission.FsAction.READ_EXECUTE;
+
+import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.hdfs.protocol.AddErasureCodingPolicyResponse;
 import org.apache.hadoop.hdfs.protocol.ErasureCodingPolicyState;
 import static org.apache.hadoop.hdfs.server.namenode.AclTestHelpers.aclEntry;
@@ -75,8 +79,8 @@ import javax.xml.parsers.SAXParserFactory;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.output.NullOutputStream;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.CommonConfigurationKeysPublic;
 import org.apache.hadoop.fs.FSDataOutputStream;
@@ -100,9 +104,11 @@ import org.apache.hadoop.hdfs.server.namenode.NameNodeLayoutVersion;
 import org.apache.hadoop.hdfs.web.WebHdfsFileSystem;
 import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.net.NetUtils;
+import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.test.GenericTestUtils;
-import org.apache.log4j.Level;
+import org.apache.hadoop.test.LambdaTestUtils;
+import org.slf4j.event.Level;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -120,7 +126,8 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
 public class TestOfflineImageViewer {
-  private static final Log LOG = LogFactory.getLog(OfflineImageViewerPB.class);
+  private static final Logger LOG =
+      LoggerFactory.getLogger(OfflineImageViewerPB.class);
   private static final int NUM_DIRS = 3;
   private static final int FILES_PER_DIR = 4;
   private static final String TEST_RENEWER = "JobTracker";
@@ -203,6 +210,21 @@ public class TestOfflineImageViewer {
       dirCount++;
       writtenFiles.put(entityRefXMLDir.toString(),
           hdfs.getFileStatus(entityRefXMLDir));
+
+      //Create directories with new line characters
+      Path newLFDir = new Path("/dirContainingNewLineChar"
+          + StringUtils.LF + "here");
+      hdfs.mkdirs(newLFDir);
+      dirCount++;
+      writtenFiles.put("\"/dirContainingNewLineChar%x0Ahere\"",
+          hdfs.getFileStatus(newLFDir));
+
+      Path newCRLFDir = new Path("/dirContainingNewLineChar"
+          + PBImageDelimitedTextWriter.CRLF + "here");
+      hdfs.mkdirs(newCRLFDir);
+      dirCount++;
+      writtenFiles.put("\"/dirContainingNewLineChar%x0D%x0Ahere\"",
+          hdfs.getFileStatus(newCRLFDir));
 
       //Create a directory with sticky bits
       Path stickyBitDir = new Path("/stickyBit");
@@ -580,6 +602,22 @@ public class TestOfflineImageViewer {
     } finally {
       // shutdown the viewer
       viewer.close();
+    }
+  }
+
+  @Test
+  public void testWebImageViewerSecureMode() throws Exception {
+    Configuration conf = new Configuration();
+    conf.set(HADOOP_SECURITY_AUTHENTICATION, "kerberos");
+    try (WebImageViewer viewer =
+        new WebImageViewer(
+            NetUtils.createSocketAddr("localhost:0"), conf)) {
+      RuntimeException ex = LambdaTestUtils.intercept(RuntimeException.class,
+          "WebImageViewer does not support secure mode.",
+          () -> viewer.start("foo"));
+    } finally {
+      conf.set(HADOOP_SECURITY_AUTHENTICATION, "simple");
+      UserGroupInformation.setConfiguration(conf);
     }
   }
 

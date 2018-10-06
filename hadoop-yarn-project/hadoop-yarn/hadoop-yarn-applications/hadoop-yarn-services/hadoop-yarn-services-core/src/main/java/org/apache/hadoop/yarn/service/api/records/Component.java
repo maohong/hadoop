@@ -17,6 +17,7 @@
 
 package org.apache.hadoop.yarn.service.api.records;
 
+import com.fasterxml.jackson.annotation.JsonValue;
 import io.swagger.annotations.ApiModel;
 import io.swagger.annotations.ApiModelProperty;
 
@@ -29,7 +30,9 @@ import java.util.Objects;
 import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
 import javax.xml.bind.annotation.XmlElement;
+import javax.xml.bind.annotation.XmlEnum;
 import javax.xml.bind.annotation.XmlRootElement;
+import javax.xml.bind.annotation.XmlType;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -46,7 +49,6 @@ import org.apache.hadoop.classification.InterfaceStability;
 @InterfaceAudience.Public
 @InterfaceStability.Unstable
 @ApiModel(description = "One or more components of the service. If the service is HBase say, then the component can be a simple role like master or regionserver. If the service is a complex business webapp then a component can be other services say Kafka or Storm. Thereby it opens up the support for complex and nested services.")
-@javax.annotation.Generated(value = "class io.swagger.codegen.languages.JavaClientCodegen", date = "2016-06-02T08:15:05.615-07:00")
 @XmlRootElement
 @XmlAccessorType(XmlAccessType.FIELD)
 @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -97,6 +99,74 @@ public class Component implements Serializable {
   @JsonProperty("containers")
   private List<Container> containers =
       Collections.synchronizedList(new ArrayList<Container>());
+
+
+  @JsonProperty("restart_policy")
+  @XmlElement(name = "restart_policy")
+  private RestartPolicyEnum restartPolicy = RestartPolicyEnum.ALWAYS;
+
+  /**
+   * Policy of restart component. Including ALWAYS - Long lived components
+   * (Always restart component instance even if instance exit code &#x3D; 0.);
+   *
+   * ON_FAILURE (Only restart component instance if instance exit code !&#x3D;
+   * 0);
+   * NEVER (Do not restart in any cases)
+   *
+   * @return restartPolicy
+   **/
+  @XmlType(name = "restart_policy")
+  @XmlEnum
+  public enum RestartPolicyEnum {
+    ALWAYS("ALWAYS"),
+
+    ON_FAILURE("ON_FAILURE"),
+
+    NEVER("NEVER");
+    private String value;
+
+    RestartPolicyEnum(String value) {
+      this.value = value;
+    }
+
+    @Override
+    @JsonValue
+    public String toString() {
+      return value;
+    }
+  }
+
+  public Component restartPolicy(RestartPolicyEnum restartPolicyEnumVal) {
+    this.restartPolicy = restartPolicyEnumVal;
+    return this;
+  }
+
+  /**
+   * Policy of restart component.
+   *
+   * Including
+   * ALWAYS (Always restart component instance even if instance exit
+   * code &#x3D; 0);
+   *
+   * ON_FAILURE (Only restart component instance if instance exit code !&#x3D;
+   * 0);
+   *
+   * NEVER (Do not restart in any cases)
+   *
+   * @return restartPolicy
+   **/
+  @ApiModelProperty(value = "Policy of restart component. Including ALWAYS "
+      + "(Always restart component even if instance exit code = 0); "
+      + "ON_FAILURE (Only restart component if instance exit code != 0); "
+      + "NEVER (Do not restart in any cases)")
+  public RestartPolicyEnum getRestartPolicy() {
+    return restartPolicy;
+  }
+
+  public void setRestartPolicy(RestartPolicyEnum restartPolicy) {
+    this.restartPolicy = restartPolicy;
+  }
+
 
   /**
    * Name of the service component (mandatory).
@@ -244,6 +314,15 @@ public class Component implements Serializable {
   public Container getContainer(String id) {
     for (Container container : containers) {
       if (container.getId().equals(id)) {
+        return container;
+      }
+    }
+    return null;
+  }
+
+  public Container getComponentInstance(String compInstanceName) {
+    for (Container container : containers) {
+      if (compInstanceName.equals(container.getComponentInstanceName())) {
         return container;
       }
     }
@@ -440,5 +519,17 @@ public class Component implements Serializable {
     if (this.getReadinessCheck() == null) {
       this.setReadinessCheck(that.getReadinessCheck());
     }
+  }
+
+  public void overwrite(Component that) {
+    setArtifact(that.getArtifact());
+    setResource(that.resource);
+    setNumberOfContainers(that.getNumberOfContainers());
+    setLaunchCommand(that.getLaunchCommand());
+    setConfiguration(that.configuration);
+    setRunPrivilegedContainer(that.getRunPrivilegedContainer());
+    setDependencies(that.getDependencies());
+    setPlacementPolicy(that.getPlacementPolicy());
+    setReadinessCheck(that.getReadinessCheck());
   }
 }

@@ -27,16 +27,17 @@ import org.apache.hadoop.classification.InterfaceStability;
 
 /**
  * Locates the most active NN for a given nameservice ID or blockpool ID. This
- * interface is used by the {@link org.apache.hadoop.hdfs.server.federation.
- * router.RouterRpcServer RouterRpcServer} to:
+ * interface is used by the {@link
+ * org.apache.hadoop.hdfs.server.federation.router.RouterRpcServer
+ * RouterRpcServer} to:
  * <ul>
  * <li>Determine the target NN for a given subcluster.
  * <li>List of all namespaces discovered/active in the federation.
  * <li>Update the currently active NN empirically.
  * </ul>
- * The interface is also used by the {@link org.apache.hadoop.hdfs.server.
- * federation.router.NamenodeHeartbeatService NamenodeHeartbeatService} to
- * register a discovered NN.
+ * The interface is also used by the {@link
+ * org.apache.hadoop.hdfs.server.federation.router.NamenodeHeartbeatService
+ * NamenodeHeartbeatService} to register a discovered NN.
  */
 @InterfaceAudience.Private
 @InterfaceStability.Evolving
@@ -107,6 +108,14 @@ public interface ActiveNamenodeResolver {
    *         available.
    */
   Set<FederationNamespaceInfo> getNamespaces() throws IOException;
+
+  /**
+   * Get a list of all namespaces that are disabled.
+   *
+   * @return List of name spaces identifier in the federation
+   * @throws IOException If the disabled list is not available.
+   */
+  Set<String> getDisabledNamespaces() throws IOException;
 
   /**
    * Assign a unique identifier for the parent router service.

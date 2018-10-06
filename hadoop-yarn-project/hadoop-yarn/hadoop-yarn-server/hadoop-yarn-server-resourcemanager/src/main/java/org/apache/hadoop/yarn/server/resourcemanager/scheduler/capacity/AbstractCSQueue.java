@@ -28,7 +28,7 @@ import java.util.Set;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import com.google.common.annotations.VisibleForTesting;
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience.Private;
@@ -92,7 +92,8 @@ public abstract class AbstractCSQueue implements CSQueue {
   Set<String> resourceTypes;
   final RMNodeLabelsManager labelManager;
   String defaultLabelExpression;
-  
+  private String multiNodeSortingPolicyName = null;
+
   Map<AccessType, AccessControlList> acls = 
       new HashMap<AccessType, AccessControlList>();
   volatile boolean reservationsContinueLooking;
@@ -413,6 +414,10 @@ public abstract class AbstractCSQueue implements CSQueue {
 
       this.priority = configuration.getQueuePriority(
           getQueuePath());
+
+      // Update multi-node sorting algorithm for scheduling as configured.
+      setMultiNodeSortingPolicyName(
+          configuration.getMultiNodesSortingAlgorithmPolicy(getQueuePath()));
 
       this.userWeights = getUserWeightsFromHierarchy(configuration);
     } finally {
@@ -1243,5 +1248,29 @@ public abstract class AbstractCSQueue implements CSQueue {
   @Override
   public Map<String, Float> getUserWeights() {
     return userWeights;
+  }
+
+  public void recoverDrainingState() {
+    try {
+      this.writeLock.lock();
+      if (getState() == QueueState.STOPPED) {
+        updateQueueState(QueueState.DRAINING);
+      }
+      LOG.info("Recover draining state for queue " + this.getQueuePath());
+      if (getParent() != null && getParent().getState() == QueueState.STOPPED) {
+        ((AbstractCSQueue) getParent()).recoverDrainingState();
+      }
+    } finally {
+      this.writeLock.unlock();
+    }
+  }
+
+  @Override
+  public String getMultiNodeSortingPolicyName() {
+    return this.multiNodeSortingPolicyName;
+  }
+
+  public void setMultiNodeSortingPolicyName(String policyName) {
+    this.multiNodeSortingPolicyName = policyName;
   }
 }

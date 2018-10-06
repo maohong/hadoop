@@ -38,7 +38,7 @@ import java.util.Enumeration;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.security.KerberosAuthException;
@@ -705,6 +705,14 @@ public class TestNetUtils {
     InetSocketAddress addr = NetUtils.createSocketAddr(defaultAddr);
     conf.setSocketAddr("myAddress", addr);
     assertEquals(defaultAddr.trim(), NetUtils.getHostPortString(addr));
+  }
+
+  @Test
+  public void testBindToLocalAddress() throws Exception {
+    assertNotNull(NetUtils
+        .bindToLocalAddress(NetUtils.getLocalInetAddress("127.0.0.1"), false));
+    assertNull(NetUtils
+        .bindToLocalAddress(NetUtils.getLocalInetAddress("127.0.0.1"), true));
   }
 
   private <T> void assertBetterArrayEquals(T[] expect, T[]got) {

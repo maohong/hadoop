@@ -34,7 +34,7 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
 import org.apache.commons.collections.map.LinkedMap;
-import org.apache.commons.lang.mutable.MutableBoolean;
+import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.hdfs.ExtendedBlockId;
 import org.apache.hadoop.hdfs.client.impl.DfsClientConf.ShortCircuitConf;
@@ -880,7 +880,7 @@ public class ShortCircuitCache implements Closeable {
       maxNonMmappedEvictableLifespanMs = 0;
       maxEvictableMmapedSize = 0;
       // Close and join cacheCleaner thread.
-      IOUtilsClient.cleanup(LOG, cacheCleaner);
+      IOUtilsClient.cleanupWithLogger(LOG, cacheCleaner);
       // Purge all replicas.
       while (true) {
         Object eldestKey;
@@ -931,7 +931,7 @@ public class ShortCircuitCache implements Closeable {
       LOG.error("Interrupted while waiting for CleanerThreadPool "
           + "to terminate", e);
     }
-    IOUtilsClient.cleanup(LOG, shmManager);
+    IOUtilsClient.cleanupWithLogger(LOG, shmManager);
   }
 
   @VisibleForTesting // ONLY for testing

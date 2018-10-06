@@ -45,7 +45,7 @@ import com.aliyun.oss.model.UploadPartCopyResult;
 import com.aliyun.oss.model.UploadPartRequest;
 import com.aliyun.oss.model.UploadPartResult;
 import org.apache.commons.collections.CollectionUtils;
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.BlockLocation;
 import org.apache.hadoop.fs.FileStatus;
@@ -149,7 +149,7 @@ public class AliyunOSSFileSystemStore {
           "null or empty. Please set proper endpoint with 'fs.oss.endpoint'.");
     }
     CredentialsProvider provider =
-        AliyunOSSUtils.getCredentialsProvider(conf);
+        AliyunOSSUtils.getCredentialsProvider(uri, conf);
     ossClient = new OSSClient(endPoint, provider, clientConf);
     uploadPartSize = AliyunOSSUtils.getMultipartSizeProperty(conf,
         MULTIPART_UPLOAD_PART_SIZE_KEY, MULTIPART_UPLOAD_PART_SIZE_DEFAULT);
@@ -168,6 +168,8 @@ public class AliyunOSSFileSystemStore {
       multipartThreshold = 1024 * 1024 * 1024;
     }
 
+    bucketName = uri.getHost();
+
     String cannedACLName = conf.get(CANNED_ACL_KEY, CANNED_ACL_DEFAULT);
     if (StringUtils.isNotEmpty(cannedACLName)) {
       CannedAccessControlList cannedACL =
@@ -176,7 +178,6 @@ public class AliyunOSSFileSystemStore {
     }
 
     maxKeys = conf.getInt(MAX_PAGING_KEYS_KEY, MAX_PAGING_KEYS_DEFAULT);
-    bucketName = uri.getHost();
   }
 
   /**
@@ -450,6 +451,8 @@ public class AliyunOSSFileSystemStore {
       request.setRange(byteStart, byteEnd);
       return ossClient.getObject(request).getObjectContent();
     } catch (OSSException | ClientException e) {
+      LOG.error("Exception thrown when store retrieves key: "
+              + key + ", exception: " + e);
       return null;
     }
   }

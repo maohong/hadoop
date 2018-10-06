@@ -531,7 +531,8 @@ public abstract class AbstractYarnScheduler
         }
 
         // create container
-        RMContainer rmContainer = recoverAndCreateContainer(container, nm);
+        RMContainer rmContainer = recoverAndCreateContainer(container, nm,
+            schedulerApp.getQueue().getQueueName());
 
         // recover RMContainer
         rmContainer.handle(
@@ -581,7 +582,7 @@ public abstract class AbstractYarnScheduler
   }
 
   private RMContainer recoverAndCreateContainer(NMContainerStatus status,
-      RMNode node) {
+      RMNode node, String queueName) {
     Container container =
         Container.newInstance(status.getContainerId(), node.getNodeID(),
           node.getHttpAddress(), status.getAllocatedResource(),
@@ -596,6 +597,7 @@ public abstract class AbstractYarnScheduler
         SchedulerRequestKey.extractFrom(container), attemptId, node.getNodeID(),
         applications.get(attemptId.getApplicationId()).getUser(), rmContext,
         status.getCreationTime(), status.getNodeLabelExpression());
+    ((RMContainerImpl) rmContainer).setQueueName(queueName);
     return rmContainer;
   }
 
@@ -876,6 +878,16 @@ public abstract class AbstractYarnScheduler
   }
 
   @Override
+  public List<SchedulingRequest> getPendingSchedulingRequestsForAttempt(
+      ApplicationAttemptId attemptId) {
+    SchedulerApplicationAttempt attempt = getApplicationAttempt(attemptId);
+    if (attempt != null) {
+      return attempt.getAppSchedulingInfo().getAllSchedulingRequests();
+    }
+    return null;
+  }
+
+  @Override
   public Priority checkAndGetApplicationPriority(
       Priority priorityRequestedByApp, UserGroupInformation user,
       String queueName, ApplicationId applicationId) throws YarnException {
@@ -1104,12 +1116,16 @@ public abstract class AbstractYarnScheduler
     }
 
     // Process new container information
+    // NOTICE: it is possible to not find the NodeID as a node can be
+    // decommissioned at the same time. Skip updates if node is null.
     SchedulerNode schedulerNode = getNode(nm.getNodeID());
     List<ContainerStatus> completedContainers = updateNewContainerInfo(nm,
         schedulerNode);
 
     // Notify Scheduler Node updated.
-    schedulerNode.notifyNodeUpdate();
+    if (schedulerNode != null) {
+      schedulerNode.notifyNodeUpdate();
+    }
 
     // Process completed containers
     Resource releasedResources = Resource.newInstance(0, 0);
@@ -1119,9 +1135,7 @@ public abstract class AbstractYarnScheduler
     // If the node is decommissioning, send an update to have the total
     // resource equal to the used resource, so no available resource to
     // schedule.
-    // TODO YARN-5128: Fix possible race-condition when request comes in before
-    // update is propagated
-    if (nm.getState() == NodeState.DECOMMISSIONING) {
+    if (nm.getState() == NodeState.DECOMMISSIONING && schedulerNode != null) {
       this.rmContext
           .getDispatcher()
           .getEventHandler()
@@ -1131,22 +1145,26 @@ public abstract class AbstractYarnScheduler
     }
 
     updateSchedulerHealthInformation(releasedResources, releasedContainers);
-    updateNodeResourceUtilization(nm, schedulerNode);
+    if (schedulerNode != null) {
+      updateNodeResourceUtilization(nm, schedulerNode);
+    }
 
     // Now node data structures are up-to-date and ready for scheduling.
     if(LOG.isDebugEnabled()) {
       LOG.debug(
-          "Node being looked for scheduling " + nm + " availableResource: "
-              + schedulerNode.getUnallocatedResource());
+          "Node being looked for scheduling " + nm + " availableResource: " +
+              (schedulerNode == null ? "unknown (decommissioned)" :
+                  schedulerNode.getUnallocatedResource()));
     }
   }
 
   @Override
-  public Resource getNormalizedResource(Resource requestedResource) {
+  public Resource getNormalizedResource(Resource requestedResource,
+                                        Resource maxResourceCapability) {
     return SchedulerUtils.getNormalizedResource(requestedResource,
         getResourceCalculator(),
         getMinimumResourceCapability(),
-        getMaximumResourceCapability(),
+        maxResourceCapability,
         getMinimumResourceCapability());
   }
 
@@ -1156,8 +1174,20 @@ public abstract class AbstractYarnScheduler
    * @param asks resource requests
    */
   protected void normalizeResourceRequests(List<ResourceRequest> asks) {
-    for (ResourceRequest ask: asks) {
-      ask.setCapability(getNormalizedResource(ask.getCapability()));
+    normalizeResourceRequests(asks, null);
+  }
+
+  /**
+   * Normalize a list of resource requests
+   * using queue maximum resource allocations.
+   * @param asks resource requests
+   */
+  protected void normalizeResourceRequests(List<ResourceRequest> asks,
+      String queueName) {
+    Resource maxAllocation = getMaximumResourceCapability(queueName);
+    for (ResourceRequest ask : asks) {
+      ask.setCapability(
+          getNormalizedResource(ask.getCapability(), maxAllocation));
     }
   }
 
@@ -1461,5 +1491,10 @@ public abstract class AbstractYarnScheduler
   public boolean attemptAllocationOnNode(SchedulerApplicationAttempt appAttempt,
       SchedulingRequest schedulingRequest, SchedulerNode schedulerNode) {
     return false;
+  }
+
+  @Override
+  public void resetSchedulerMetrics() {
+    // reset scheduler metrics
   }
 }

@@ -26,11 +26,19 @@ import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.service.AbstractService;
 import org.apache.hadoop.util.ExitUtil;
 import org.apache.hadoop.yarn.api.ApplicationConstants;
+import org.apache.hadoop.yarn.api.records.ContainerId;
+import org.apache.hadoop.yarn.api.records.FinalApplicationStatus;
 import org.apache.hadoop.yarn.exceptions.YarnException;
 import org.apache.hadoop.yarn.ipc.YarnRPC;
+import org.apache.hadoop.yarn.proto.ClientAMProtocol.CancelUpgradeRequestProto;
+import org.apache.hadoop.yarn.proto.ClientAMProtocol.CancelUpgradeResponseProto;
+import org.apache.hadoop.yarn.proto.ClientAMProtocol.CompInstancesUpgradeRequestProto;
+import org.apache.hadoop.yarn.proto.ClientAMProtocol.CompInstancesUpgradeResponseProto;
 import org.apache.hadoop.yarn.proto.ClientAMProtocol.ComponentCountProto;
 import org.apache.hadoop.yarn.proto.ClientAMProtocol.FlexComponentsRequestProto;
 import org.apache.hadoop.yarn.proto.ClientAMProtocol.FlexComponentsResponseProto;
+import org.apache.hadoop.yarn.proto.ClientAMProtocol.GetCompInstancesRequestProto;
+import org.apache.hadoop.yarn.proto.ClientAMProtocol.GetCompInstancesResponseProto;
 import org.apache.hadoop.yarn.proto.ClientAMProtocol.GetStatusRequestProto;
 import org.apache.hadoop.yarn.proto.ClientAMProtocol.GetStatusResponseProto;
 import org.apache.hadoop.yarn.proto.ClientAMProtocol.RestartServiceRequestProto;
@@ -39,13 +47,18 @@ import org.apache.hadoop.yarn.proto.ClientAMProtocol.StopRequestProto;
 import org.apache.hadoop.yarn.proto.ClientAMProtocol.StopResponseProto;
 import org.apache.hadoop.yarn.proto.ClientAMProtocol.UpgradeServiceRequestProto;
 import org.apache.hadoop.yarn.proto.ClientAMProtocol.UpgradeServiceResponseProto;
+import org.apache.hadoop.yarn.service.api.records.Container;
 import org.apache.hadoop.yarn.service.component.ComponentEvent;
+import org.apache.hadoop.yarn.service.component.instance.ComponentInstanceEvent;
+import org.apache.hadoop.yarn.service.component.instance.ComponentInstanceEventType;
+import org.apache.hadoop.yarn.service.utils.FilterUtils;
 import org.apache.hadoop.yarn.service.utils.ServiceApiUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.util.List;
 
 import static org.apache.hadoop.yarn.service.component.ComponentEventType.FLEX;
 
@@ -125,7 +138,7 @@ public class ClientAMService extends AbstractService
     LOG.info("Stop the service by {}", UserGroupInformation.getCurrentUser());
     context.scheduler.getDiagnostics()
         .append("Stopped by user " + UserGroupInformation.getCurrentUser());
-    context.scheduler.setGracefulStop();
+    context.scheduler.setGracefulStop(FinalApplicationStatus.ENDED);
 
     // Stop the service in 2 seconds delay to make sure this rpc call is completed.
     // shutdown hook will be executed which will stop AM gracefully.
@@ -151,12 +164,16 @@ public class ClientAMService extends AbstractService
   @Override
   public UpgradeServiceResponseProto upgrade(
       UpgradeServiceRequestProto request) throws IOException {
-    ServiceEvent event = new ServiceEvent(ServiceEventType.UPGRADE);
-    event.setVersion(request.getVersion());
-    context.scheduler.getDispatcher().getEventHandler().handle(event);
-    LOG.info("Upgrading service to version {} by {}", request.getVersion(),
-        UserGroupInformation.getCurrentUser());
-    return UpgradeServiceResponseProto.newBuilder().build();
+    try {
+      LOG.info("Upgrading service to version {} by {}", request.getVersion(),
+          UserGroupInformation.getCurrentUser());
+      context.getServiceManager().processUpgradeRequest(request.getVersion(),
+          request.getAutoFinalize(), request.getExpressUpgrade());
+      return UpgradeServiceResponseProto.newBuilder().build();
+    } catch (Exception ex) {
+      return UpgradeServiceResponseProto.newBuilder().setError(ex.getMessage())
+          .build();
+    }
   }
 
   @Override
@@ -166,5 +183,41 @@ public class ClientAMService extends AbstractService
     context.scheduler.getDispatcher().getEventHandler().handle(event);
     LOG.info("Restart service by {}", UserGroupInformation.getCurrentUser());
     return RestartServiceResponseProto.newBuilder().build();
+  }
+
+  @Override
+  public CompInstancesUpgradeResponseProto upgrade(
+      CompInstancesUpgradeRequestProto request)
+      throws IOException, YarnException {
+    if (!request.getContainerIdsList().isEmpty()) {
+
+      for (String containerId : request.getContainerIdsList()) {
+        ComponentInstanceEvent event =
+            new ComponentInstanceEvent(ContainerId.fromString(containerId),
+                ComponentInstanceEventType.UPGRADE);
+        LOG.info("Upgrade container {}", containerId);
+        context.scheduler.getDispatcher().getEventHandler().handle(event);
+      }
+    }
+    return CompInstancesUpgradeResponseProto.newBuilder().build();
+  }
+
+  @Override
+  public GetCompInstancesResponseProto getCompInstances(
+      GetCompInstancesRequestProto request) throws IOException {
+    List<Container> containers = FilterUtils.filterInstances(context, request);
+    return GetCompInstancesResponseProto.newBuilder().setCompInstances(
+        ServiceApiUtil.CONTAINER_JSON_SERDE.toJson(containers.toArray(
+            new Container[containers.size()]))).build();
+  }
+
+  @Override
+  public CancelUpgradeResponseProto cancelUpgrade(
+      CancelUpgradeRequestProto request) throws IOException, YarnException {
+    LOG.info("Cancel service upgrade by {}",
+        UserGroupInformation.getCurrentUser());
+    ServiceEvent event = new ServiceEvent(ServiceEventType.CANCEL_UPGRADE);
+    context.scheduler.getDispatcher().getEventHandler().handle(event);
+    return CancelUpgradeResponseProto.newBuilder().build();
   }
 }

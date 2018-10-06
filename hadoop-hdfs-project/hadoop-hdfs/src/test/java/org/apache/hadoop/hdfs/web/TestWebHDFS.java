@@ -51,8 +51,8 @@ import java.util.Random;
 
 import com.google.common.collect.ImmutableList;
 import org.apache.commons.io.IOUtils;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.BlockLocation;
 import org.apache.hadoop.fs.BlockStoragePolicySpi;
@@ -81,7 +81,6 @@ import org.apache.hadoop.hdfs.MiniDFSCluster;
 import org.apache.hadoop.hdfs.TestDFSClientRetries;
 import org.apache.hadoop.hdfs.TestFileCreation;
 import org.apache.hadoop.hdfs.client.HdfsClientConfigKeys;
-import org.apache.hadoop.hdfs.protocol.BlockStoragePolicy;
 import org.apache.hadoop.hdfs.protocol.ErasureCodingPolicy;
 import org.apache.hadoop.hdfs.protocol.SystemErasureCodingPolicies;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
@@ -110,14 +109,14 @@ import org.apache.hadoop.security.token.SecretManager.InvalidToken;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.test.GenericTestUtils;
 import org.apache.hadoop.util.DataChecksum;
-import org.apache.log4j.Level;
+import org.apache.hadoop.test.Whitebox;
+import org.slf4j.event.Level;
 import org.codehaus.jettison.json.JSONArray;
 import org.codehaus.jettison.json.JSONException;
 import org.codehaus.jettison.json.JSONObject;
 import org.junit.Assert;
 import org.junit.Test;
 import org.mockito.Mockito;
-import org.mockito.internal.util.reflection.Whitebox;
 
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyInt;
@@ -130,7 +129,7 @@ import static org.mockito.Mockito.when;
 
 /** Test WebHDFS */
 public class TestWebHDFS {
-  static final Log LOG = LogFactory.getLog(TestWebHDFS.class);
+  static final Logger LOG = LoggerFactory.getLogger(TestWebHDFS.class);
   
   static final Random RANDOM = new Random();
   
@@ -296,7 +295,7 @@ public class TestWebHDFS {
   /** Test client retry with namenode restarting. */
   @Test(timeout=300000)
   public void testNamenodeRestart() throws Exception {
-    GenericTestUtils.setLogLevel(NamenodeWebHdfsMethods.LOG, Level.ALL);
+    GenericTestUtils.setLogLevel(NamenodeWebHdfsMethods.LOG, Level.TRACE);
     final Configuration conf = WebHdfsTestUtil.createConf();
     TestDFSClientRetries.namenodeRestartTest(conf, true);
   }
@@ -482,6 +481,9 @@ public class TestWebHDFS {
 
       // allow snapshots on /bar using webhdfs
       webHdfs.allowSnapshot(bar);
+      // check if snapshot status is enabled
+      assertTrue(dfs.getFileStatus(bar).isSnapshotEnabled());
+      assertTrue(webHdfs.getFileStatus(bar).isSnapshotEnabled());
       webHdfs.createSnapshot(bar, "s1");
       final Path s1path = SnapshotTestHelper.getSnapshotRoot(bar, "s1");
       Assert.assertTrue(webHdfs.exists(s1path));
@@ -491,15 +493,24 @@ public class TestWebHDFS {
       assertEquals(bar, snapshottableDirs[0].getFullPath());
       dfs.deleteSnapshot(bar, "s1");
       dfs.disallowSnapshot(bar);
+      // check if snapshot status is disabled
+      assertFalse(dfs.getFileStatus(bar).isSnapshotEnabled());
+      assertFalse(webHdfs.getFileStatus(bar).isSnapshotEnabled());
       snapshottableDirs = dfs.getSnapshottableDirListing();
       assertNull(snapshottableDirs);
 
       // disallow snapshots on /bar using webhdfs
       dfs.allowSnapshot(bar);
+      // check if snapshot status is enabled, again
+      assertTrue(dfs.getFileStatus(bar).isSnapshotEnabled());
+      assertTrue(webHdfs.getFileStatus(bar).isSnapshotEnabled());
       snapshottableDirs = dfs.getSnapshottableDirListing();
       assertEquals(1, snapshottableDirs.length);
       assertEquals(bar, snapshottableDirs[0].getFullPath());
       webHdfs.disallowSnapshot(bar);
+      // check if snapshot status is disabled, again
+      assertFalse(dfs.getFileStatus(bar).isSnapshotEnabled());
+      assertFalse(webHdfs.getFileStatus(bar).isSnapshotEnabled());
       snapshottableDirs = dfs.getSnapshottableDirListing();
       assertNull(snapshottableDirs);
       try {
@@ -730,6 +741,12 @@ public class TestWebHDFS {
       Assert.assertTrue(diffReport.getDiffList().contains(entry2));
       Assert.assertTrue(diffReport.getDiffList().contains(entry3));
       Assert.assertTrue(diffReport.getDiffList().contains(entry4));
+      Assert.assertEquals(diffReport.getDiffList().size(), 5);
+
+      // Test with fromSnapshot and toSnapshot as null.
+      diffReport = webHdfs.getSnapshotDiffReport(foo, null, "s2");
+      Assert.assertEquals(diffReport.getDiffList().size(), 0);
+      diffReport = webHdfs.getSnapshotDiffReport(foo, "s1", null);
       Assert.assertEquals(diffReport.getDiffList().size(), 5);
     } finally {
       if (cluster != null) {
@@ -1387,11 +1404,8 @@ public class TestWebHDFS {
           conf, WebHdfsConstants.WEBHDFS_SCHEME);
 
       // test getAllStoragePolicies
-      BlockStoragePolicy[] dfsPolicies = (BlockStoragePolicy[]) dfs
-          .getAllStoragePolicies().toArray();
-      BlockStoragePolicy[] webHdfsPolicies = (BlockStoragePolicy[]) webHdfs
-          .getAllStoragePolicies().toArray();
-      Assert.assertTrue(Arrays.equals(dfsPolicies, webHdfsPolicies));
+      Assert.assertTrue(Arrays.equals(dfs.getAllStoragePolicies().toArray(),
+          webHdfs.getAllStoragePolicies().toArray()));
 
       // test get/set/unset policies
       DFSTestUtil.createFile(dfs, path, 0, (short) 1, 0L);

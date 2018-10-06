@@ -40,7 +40,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 
 import org.apache.commons.io.IOUtils;
-import org.apache.commons.lang.RandomStringUtils;
+import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.impl.Log4JLogger;
 import org.apache.hadoop.fs.FileUtil;
@@ -344,7 +344,7 @@ public abstract class GenericTestUtils {
       throw new AssertionError(E_NULL_THROWABLE_STRING, t);
     }
     if (expectedText != null && !msg.contains(expectedText)) {
-      String prefix = org.apache.commons.lang.StringUtils.isEmpty(message)
+      String prefix = org.apache.commons.lang3.StringUtils.isEmpty(message)
           ? "" : (message + ": ");
       throw new AssertionError(
           String.format("%s Expected to find '%s' %s: %s",
@@ -501,7 +501,7 @@ public abstract class GenericTestUtils {
    * method is called, then waits on another before continuing.
    */
   public static class DelayAnswer implements Answer<Object> {
-    private final Log LOG;
+    private final org.slf4j.Logger LOG;
 
     private final CountDownLatch fireLatch = new CountDownLatch(1);
     private final CountDownLatch waitLatch = new CountDownLatch(1);
@@ -514,7 +514,7 @@ public abstract class GenericTestUtils {
     private volatile Throwable thrown;
     private volatile Object returnValue;
 
-    public DelayAnswer(Log log) {
+    public DelayAnswer(org.slf4j.Logger log) {
       this.LOG = log;
     }
 
@@ -611,13 +611,13 @@ public abstract class GenericTestUtils {
    */
   public static class DelegateAnswer implements Answer<Object> {
     private final Object delegate;
-    private final Log log;
+    private final org.slf4j.Logger log;
 
     public DelegateAnswer(Object delegate) {
       this(null, delegate);
     }
 
-    public DelegateAnswer(Log log, Object delegate) {
+    public DelegateAnswer(org.slf4j.Logger log, Object delegate) {
       this.log = log;
       this.delegate = delegate;
     }
@@ -661,7 +661,7 @@ public abstract class GenericTestUtils {
     public Object answer(InvocationOnMock invocation) throws Throwable {
       boolean interrupted = false;
       try {
-        Thread.sleep(r.nextInt(maxSleepTime) + minSleepTime);
+        Thread.sleep(r.nextInt(maxSleepTime - minSleepTime) + minSleepTime);
       } catch (InterruptedException ie) {
         interrupted = true;
       }

@@ -37,8 +37,8 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.conf.Configuration;
@@ -83,7 +83,8 @@ import com.google.common.collect.Lists;
 @InterfaceAudience.Private
 @InterfaceStability.Evolving
 public class FSImage implements Closeable {
-  public static final Log LOG = LogFactory.getLog(FSImage.class.getName());
+  public static final Logger LOG =
+      LoggerFactory.getLogger(FSImage.class.getName());
 
   protected FSEditLog editLog = null;
   private boolean isUpgradeFinalized = false;
@@ -160,7 +161,8 @@ public class FSImage implements Closeable {
     archivalManager = new NNStorageRetentionManager(conf, storage, editLog);
   }
  
-  void format(FSNamesystem fsn, String clusterId) throws IOException {
+  void format(FSNamesystem fsn, String clusterId, boolean force)
+      throws IOException {
     long fileCount = fsn.getFilesTotal();
     // Expect 1 file, which is the root inode
     Preconditions.checkState(fileCount == 1,
@@ -171,7 +173,7 @@ public class FSImage implements Closeable {
     ns.clusterID = clusterId;
     
     storage.format(ns);
-    editLog.formatNonFileJournals(ns);
+    editLog.formatNonFileJournals(ns, force);
     saveFSImageInAllDirs(fsn, 0);
   }
   
@@ -742,7 +744,8 @@ public class FSImage implements Closeable {
     prog.endPhase(Phase.LOADING_FSIMAGE);
     
     if (!rollingRollback) {
-      long txnsAdvanced = loadEdits(editStreams, target, startOpt, recovery);
+      long txnsAdvanced = loadEdits(editStreams, target, Long.MAX_VALUE,
+          startOpt, recovery);
       needToSave |= needsResaveBasedOnStaleCheckpoint(imageFile.getFile(),
           txnsAdvanced);
     } else {
@@ -866,11 +869,12 @@ public class FSImage implements Closeable {
    */
   public long loadEdits(Iterable<EditLogInputStream> editStreams,
       FSNamesystem target) throws IOException {
-    return loadEdits(editStreams, target, null, null);
+    return loadEdits(editStreams, target, Long.MAX_VALUE, null, null);
   }
 
-  private long loadEdits(Iterable<EditLogInputStream> editStreams,
-      FSNamesystem target, StartupOption startOpt, MetaRecoveryContext recovery)
+  public long loadEdits(Iterable<EditLogInputStream> editStreams,
+      FSNamesystem target, long maxTxnsToRead,
+      StartupOption startOpt, MetaRecoveryContext recovery)
       throws IOException {
     LOG.debug("About to load edits:\n  " + Joiner.on("\n  ").join(editStreams));
     StartupProgress prog = NameNode.getStartupProgress();
@@ -885,14 +889,16 @@ public class FSImage implements Closeable {
         LOG.info("Reading " + editIn + " expecting start txid #" +
               (lastAppliedTxId + 1));
         try {
-          loader.loadFSEdits(editIn, lastAppliedTxId + 1, startOpt, recovery);
+          loader.loadFSEdits(editIn, lastAppliedTxId + 1, maxTxnsToRead,
+              startOpt, recovery);
         } finally {
           // Update lastAppliedTxId even in case of error, since some ops may
           // have been successfully applied before the error.
           lastAppliedTxId = loader.getLastAppliedTxId();
         }
         // If we are in recovery mode, we may have skipped over some txids.
-        if (editIn.getLastTxId() != HdfsServerConstants.INVALID_TXID) {
+        if (editIn.getLastTxId() != HdfsServerConstants.INVALID_TXID
+            && recovery != null) {
           lastAppliedTxId = editIn.getLastTxId();
         }
       }
@@ -1131,7 +1137,7 @@ public class FSImage implements Closeable {
     getStorage().updateNameDirSize();
 
     if (exitAfterSave.get()) {
-      LOG.fatal("NameNode process will exit now... The saved FsImage " +
+      LOG.error("NameNode process will exit now... The saved FsImage " +
           nnf + " is potentially corrupted.");
       ExitUtil.terminate(-1);
     }

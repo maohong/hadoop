@@ -21,7 +21,7 @@ Introduction
 ------------
 
 NameNodes have scalability limits because of the metadata overhead comprised of inodes (files and directories) and file blocks, the number of Datanode heartbeats, and the number of HDFS RPC client requests.
-The common solution is to split the filesystem into smaller subclusters [HDFS Federation](./Federation.html) and provide a federated view [ViewFs](./ViewFs.html).
+The common solution is to split the filesystem into smaller subclusters [HDFS Federation](../hadoop-hdfs/Federation.html) and provide a federated view [ViewFs](../hadoop-hdfs/ViewFs.html).
 The problem is how to maintain the split of the subclusters (e.g., namespace partition), which forces users to connect to multiple subclusters and manage the allocation of folders/files to them.
 
 
@@ -37,8 +37,8 @@ This layer must be scalable, highly available, and fault tolerant.
 
 This federation layer comprises multiple components.
 The _Router_ component that has the same interface as a NameNode, and forwards the client requests to the correct subcluster, based on ground-truth information from a State Store.
-The _State Store_ combines a remote _Mount Table_ (in the flavor of [ViewFs](./ViewFs.html), but shared between clients) and utilization (load/capacity) information about the subclusters.
-This approach has the same architecture as [YARN federation](../hadoop-yarn/Federation.html).
+The _State Store_ combines a remote _Mount Table_ (in the flavor of [ViewFs](../hadoop-hdfs/ViewFs.html), but shared between clients) and utilization (load/capacity) information about the subclusters.
+This approach has the same architecture as [YARN federation](../../hadoop-yarn/hadoop-yarn-site/Federation.html).
 
 ![Router-based Federation Sequence Diagram | width=800](./images/routerfederation.png)
 
@@ -62,7 +62,7 @@ Each Router has two roles:
 #### Federated interface
 The Router receives a client request, checks the State Store for the correct subcluster, and forwards the request to the active NameNode of that subcluster.
 The reply from the NameNode then flows in the opposite direction.
-The Routers are stateless and can be behind a load balancer.
+The Routers are stateless and can be behind a load balancer. For health checking, you can use /isActive endpoint as a health probe (e.g. http://ROUTER_HOSTNAME:ROUTER_PORT/isActive).
 For performance, the Router also caches remote mount table entries and the state of the subclusters.
 To make sure that changes have been propagated to all Routers, each Router heartbeats its state to the State Store.
 
@@ -140,7 +140,7 @@ Examples users may encounter include the following.
 ### Quota management
 Federation supports and controls global quota at mount table level.
 For performance reasons, the Router caches the quota usage and updates it periodically. These quota usage values
-will be used for quota-verification during each WRITE RPC call invoked in RouterRPCSever. See [HDFS Quotas Guide](./HdfsQuotaAdminGuide.html)
+will be used for quota-verification during each WRITE RPC call invoked in RouterRPCSever. See [HDFS Quotas Guide](../hadoop-hdfs/HdfsQuotaAdminGuide.html)
 for the quota detail.
 
 ### State Store
@@ -163,7 +163,7 @@ The Routers discard the entries older than a certain threshold (e.g., ten Router
 
 * **Mount Table**:
 This table hosts the mapping between folders and subclusters.
-It is similar to the mount table in [ViewFs](.ViewFs.html) where it specifies the federated folder, the destination subcluster and the path in that folder.
+It is similar to the mount table in [ViewFs](../hadoop-hdfs/ViewFs.html) where it specifies the federated folder, the destination subcluster and the path in that folder.
 
 
 ### Security
@@ -175,7 +175,7 @@ Deployment
 
 By default, the Router is ready to take requests and monitor the NameNode in the local machine.
 It needs to know the State Store endpoint by setting `dfs.federation.router.store.driver.class`.
-The rest of the options are documented in [hdfs-default.xml](./hdfs-default.xml).
+The rest of the options are documented in [hdfs-rbf-default.xml](../hadoop-hdfs-rbf/hdfs-rbf-default.xml).
 
 Once the Router is configured, it can be started:
 
@@ -187,7 +187,7 @@ And to stop it:
 
 ### Mount table management
 
-The mount table entries are pretty much the same as in [ViewFs](./ViewFs.html).
+The mount table entries are pretty much the same as in [ViewFs](../hadoop-hdfs/ViewFs.html).
 A good practice for simplifying the management is to name the federated namespace with the same names as the destination namespaces.
 For example, if we to mount `/data/app1` in the federated namespace, it is recommended to have that same name as in the destination namespace.
 
@@ -214,6 +214,7 @@ Mount table permission can be set by following command:
 
 The option mode is UNIX-style permissions for the mount table. Permissions are specified in octal, e.g. 0755. By default, this is set to 0755.
 
+#### Quotas
 Router-based federation supports global quota at mount table level. Mount table entries may spread multiple subclusters and the global quota will be
 accounted across these subclusters.
 
@@ -228,6 +229,42 @@ Ls command will show below information for each mount table entry:
 
     Source                    Destinations              Owner                     Group                     Mode                      Quota/Usage
     /path                     ns0->/path                root                      supergroup                rwxr-xr-x                 [NsQuota: 50/0, SsQuota: 100 B/0 B]
+
+#### Multiple subclusters
+A mount point also supports mapping multiple subclusters.
+For example, to create a mount point that stores files in subclusters `ns1` and `ns2`.
+
+    [hdfs]$ $HADOOP_HOME/bin/hdfs dfsrouteradmin -add /data ns1,ns2 /data -order SPACE
+
+When listing `/data`, it will show all the folders and files in both subclusters.
+For deciding where to create a new file/folder it uses the order parameter, it currently supports the following methods:
+
+* HASH: Follow consistent hashing in the first level. Deeper levels will be in the one of the parent.
+* LOCAL: Try to write data in the local subcluster.
+* RANDOM: Random subcluster. This is usually useful for balancing the load across. Folders are created in all subclusters.
+* HASH_ALL: Follow consistent hashing at all the levels. This approach tries to balance the reads and writes evenly across subclusters. Folders are created in all subclusters.
+* SPACE: Try to write data in the subcluster with the most available space. Folders are created in all subclusters.
+
+For the hash-based approaches, the difference is that HASH would make all the files/folders within a folder belong to the same subcluster while HASH_ALL will spread all files under a mount point.
+For example, assuming we have a HASH mount point for `/data/hash`, files and folders under `/data/hash/folder0` will all be in the same subcluster.
+On the other hand, a HASH_ALL mount point for `/data/hash_all`, will spread files under `/data/hash_all/folder0` across all the subclusters for that mount point (subfolders will be created to all subclusters).
+
+RANDOM can be used for reading and writing data from/into different subclusters.
+The common use for this approach is to have the same data in multiple subclusters and balance the reads across subclusters.
+For example, if thousands of containers need to read the same data (e.g., a library), one can use RANDOM to read the data from any of the subclusters.
+
+Note that consistency of the data across subclusters is not guaranteed by the Router.
+
+### Disabling nameservices
+
+To prevent accessing a nameservice (sublcuster), it can be disabled from the federation.
+For example, one can disable `ns1`, list it and enable it again:
+
+    [hdfs]$ $HADOOP_HOME/bin/hdfs dfsrouteradmin -nameservice disable ns1
+    [hdfs]$ $HADOOP_HOME/bin/hdfs dfsrouteradmin -getDisabledNameservices
+    [hdfs]$ $HADOOP_HOME/bin/hdfs dfsrouteradmin -nameservice enable ns1
+
+This is useful when decommissioning subclusters or when one subcluster is missbehaving (e.g., low performance or unavailability).
 
 Client configuration
 --------------------
@@ -279,7 +316,7 @@ Router configuration
 --------------------
 
 One can add the configurations for Router-based federation to **hdfs-site.xml**.
-The main options are documented in [hdfs-default.xml](./hdfs-default.xml).
+The main options are documented in [hdfs-rbf-default.xml](../hadoop-hdfs-rbf/hdfs-rbf-default.xml).
 The configuration values are described in this section.
 
 ### RPC server
@@ -318,6 +355,18 @@ The administration server to manage the Mount Table.
 | dfs.federation.router.admin-address | 0.0.0.0:8111 | RPC address that handles the admin requests. |
 | dfs.federation.router.admin-bind-host | 0.0.0.0 | The actual address the RPC admin server will bind to. |
 | dfs.federation.router.admin.handler.count | 1 | The number of server threads for the router to handle RPC requests from admin. |
+
+### HTTP Server
+
+The HTTP Server to provide Web UI and the HDFS REST interface ([WebHDFS](../hadoop-hdfs/WebHDFS.html)) for the clients. The default URL is "`http://router_host:50071`".
+
+| Property | Default | Description|
+|:---- |:---- |:---- |
+| dfs.federation.router.http.enable | `true` | If `true`, the HTTP service to handle client requests in the router is enabled. |
+| dfs.federation.router.http-address | 0.0.0.0:50071 | HTTP address that handles the web requests to the Router. |
+| dfs.federation.router.http-bind-host | 0.0.0.0 | The actual address the HTTP server will bind to. |
+| dfs.federation.router.https-address | 0.0.0.0:50072 | HTTPS address that handles the web requests to the Router. |
+| dfs.federation.router.https-bind-host | 0.0.0.0 | The actual address the HTTPS server will bind to. |
 
 ### State Store
 

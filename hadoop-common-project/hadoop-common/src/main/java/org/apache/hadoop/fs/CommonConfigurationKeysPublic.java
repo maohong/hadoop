@@ -542,7 +542,7 @@ public class CommonConfigurationKeysPublic {
    * <a href="{@docRoot}/../hadoop-project-dist/hadoop-common/core-default.xml">
    * core-default.xml</a>
    */
-  public static final String HADOOP_SECURITY_GROUP_SHELL_COMMAND_TIMEOUT_SECS =
+  public static final String HADOOP_SECURITY_GROUP_SHELL_COMMAND_TIMEOUT_KEY =
       "hadoop.security.groups.shell.command.timeout";
   /**
    * @see
@@ -550,7 +550,7 @@ public class CommonConfigurationKeysPublic {
    * core-default.xml</a>
    */
   public static final long
-          HADOOP_SECURITY_GROUP_SHELL_COMMAND_TIMEOUT_SECS_DEFAULT =
+          HADOOP_SECURITY_GROUP_SHELL_COMMAND_TIMEOUT_DEFAULT =
           0L;
   /**
    * @see
@@ -657,6 +657,13 @@ public class CommonConfigurationKeysPublic {
    */
   public static final String HADOOP_SECURITY_CRYPTO_JCE_PROVIDER_KEY =
     "hadoop.security.crypto.jce.provider";
+  /**
+   * @see
+   * <a href="{@docRoot}/../hadoop-project-dist/hadoop-common/core-default.xml">
+   * core-default.xml</a>
+   */
+  public static final String HADOOP_SECURITY_CRYPTO_JCEKS_KEY_SERIALFILTER =
+      "hadoop.security.crypto.jceks.key.serialfilter";
   /**
    * @see
    * <a href="{@docRoot}/../hadoop-project-dist/hadoop-common/core-default.xml">
@@ -775,16 +782,6 @@ public class CommonConfigurationKeysPublic {
    * <a href="{@docRoot}/../hadoop-project-dist/hadoop-common/core-default.xml">
    * core-default.xml</a>
    */
-  public static final String KMS_CLIENT_COPY_LEGACY_TOKEN_KEY =
-      "hadoop.security.kms.client.copy.legacy.token";
-  /**  Default value is true. */
-  public static final boolean KMS_CLIENT_COPY_LEGACY_TOKEN_DEFAULT = true;
-
-  /**
-   * @see
-   * <a href="{@docRoot}/../hadoop-project-dist/hadoop-common/core-default.xml">
-   * core-default.xml</a>
-   */
   public static final String KMS_CLIENT_FAILOVER_SLEEP_MAX_MILLIS_KEY =
       "hadoop.security.kms.client.failover.sleep.max.millis";
   /** Default value is 2 secs. */
@@ -889,9 +886,35 @@ public class CommonConfigurationKeysPublic {
           "fs.s3a.*.server-side-encryption.key",
           "fs.azure\\.account.key.*",
           "credential$",
-          "oauth.*token$",
+          "oauth.*secret",
+          "oauth.*password",
+          "oauth.*token",
           HADOOP_SECURITY_SENSITIVE_CONFIG_KEYS);
+
+  /**
+   * @deprecated Please use
+   * {@link CommonConfigurationKeysPublic#HADOOP_TAGS_SYSTEM} instead
+   * See https://issues.apache.org/jira/browse/HADOOP-15474
+   */
   public static final String HADOOP_SYSTEM_TAGS = "hadoop.system.tags";
+
+  /**
+   * @deprecated Please use
+   * {@link CommonConfigurationKeysPublic#HADOOP_TAGS_CUSTOM} instead
+   * See https://issues.apache.org/jira/browse/HADOOP-15474
+   */
   public static final String HADOOP_CUSTOM_TAGS = "hadoop.custom.tags";
+
+  public static final String HADOOP_TAGS_SYSTEM = "hadoop.tags.system";
+  public static final String HADOOP_TAGS_CUSTOM = "hadoop.tags.custom";
+
+  /** Configuration option for the shutdown hook manager shutdown time:
+   *  {@value}. */
+  public static final String SERVICE_SHUTDOWN_TIMEOUT =
+      "hadoop.service.shutdown.timeout";
+
+  /** Default shutdown hook timeout: {@value} seconds. */
+  public static final long SERVICE_SHUTDOWN_TIMEOUT_DEFAULT = 30;
+
 }
 

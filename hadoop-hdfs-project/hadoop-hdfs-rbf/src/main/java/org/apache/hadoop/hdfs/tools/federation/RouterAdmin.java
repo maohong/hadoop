@@ -26,6 +26,7 @@ import java.util.Map;
 import org.apache.hadoop.classification.InterfaceAudience.Private;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
+import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.hdfs.HdfsConfiguration;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
@@ -93,26 +94,99 @@ public class RouterAdmin extends Configured implements Tool {
    * Print the usage message.
    */
   public void printUsage() {
-    String usage = "Federation Admin Tools:\n"
-        + "\t[-add <source> <nameservice> <destination> "
-        + "[-readonly] [-order HASH|LOCAL|RANDOM|HASH_ALL] "
-        + "-owner <owner> -group <group> -mode <mode>]\n"
-        + "\t[-rm <source>]\n"
-        + "\t[-ls <path>]\n"
-        + "\t[-setQuota <path> -nsQuota <nsQuota> -ssQuota "
-        + "<quota in bytes or quota size string>]\n"
-        + "\t[-clrQuota <path>]\n"
-        + "\t[-safemode enter | leave | get]\n"
-        + "\t[-nameservice enable | disable <nameservice>]\n"
-        + "\t[-getDisabledNameservices]\n";
-
+    String usage = getUsage(null);
     System.out.println(usage);
+  }
+
+  private void printUsage(String cmd) {
+    String usage = getUsage(cmd);
+    System.out.println(usage);
+  }
+
+  private String getUsage(String cmd) {
+    if (cmd == null) {
+      String[] commands =
+          {"-add", "-update", "-rm", "-ls", "-setQuota", "-clrQuota",
+              "-safemode", "-nameservice", "-getDisabledNameservices"};
+      StringBuilder usage = new StringBuilder();
+      usage.append("Usage: hdfs routeradmin :\n");
+      for (int i = 0; i < commands.length; i++) {
+        usage.append(getUsage(commands[i]));
+        if (i + 1 < commands.length) {
+          usage.append("\n");
+        }
+      }
+      return usage.toString();
+    }
+    if (cmd.equals("-add")) {
+      return "\t[-add <source> <nameservice1, nameservice2, ...> <destination> "
+          + "[-readonly] [-order HASH|LOCAL|RANDOM|HASH_ALL] "
+          + "-owner <owner> -group <group> -mode <mode>]";
+    } else if (cmd.equals("-update")) {
+      return "\t[-update <source> <nameservice1, nameservice2, ...> "
+          + "<destination> "
+          + "[-readonly] [-order HASH|LOCAL|RANDOM|HASH_ALL] "
+          + "-owner <owner> -group <group> -mode <mode>]";
+    } else if (cmd.equals("-rm")) {
+      return "\t[-rm <source>]";
+    } else if (cmd.equals("-ls")) {
+      return "\t[-ls <path>]";
+    } else if (cmd.equals("-setQuota")) {
+      return "\t[-setQuota <path> -nsQuota <nsQuota> -ssQuota "
+          + "<quota in bytes or quota size string>]";
+    } else if (cmd.equals("-clrQuota")) {
+      return "\t[-clrQuota <path>]";
+    } else if (cmd.equals("-safemode")) {
+      return "\t[-safemode enter | leave | get]";
+    } else if (cmd.equals("-nameservice")) {
+      return "\t[-nameservice enable | disable <nameservice>]";
+    } else if (cmd.equals("-getDisabledNameservices")) {
+      return "\t[-getDisabledNameservices]";
+    }
+    return getUsage(null);
+  }
+
+  /**
+   * Usage: validates the maximum number of arguments for a command.
+   * @param arg List of of command line parameters.
+   */
+  private void validateMax(String[] arg) {
+    if (arg[0].equals("-rm")) {
+      if (arg.length > 2) {
+        throw new IllegalArgumentException(
+            "Too many arguments, Max=1 argument allowed");
+      }
+    } else if (arg[0].equals("-ls")) {
+      if (arg.length > 2) {
+        throw new IllegalArgumentException(
+            "Too many arguments, Max=1 argument allowed");
+      }
+    } else if (arg[0].equals("-clrQuota")) {
+      if (arg.length > 2) {
+        throw new IllegalArgumentException(
+            "Too many arguments, Max=1 argument allowed");
+      }
+    } else if (arg[0].equals("-safemode")) {
+      if (arg.length > 2) {
+        throw new IllegalArgumentException(
+            "Too many arguments, Max=1 argument allowed only");
+      }
+    } else if (arg[0].equals("-nameservice")) {
+      if (arg.length > 3) {
+        throw new IllegalArgumentException(
+            "Too many arguments, Max=2 arguments allowed");
+      }
+    } else if (arg[0].equals("-getDisabledNameservices")) {
+      if (arg.length > 1) {
+        throw new IllegalArgumentException("No arguments allowed");
+      }
+    }
   }
 
   @Override
   public int run(String[] argv) throws Exception {
     if (argv.length < 1) {
-      System.err.println("Not enough parameters specificed");
+      System.err.println("Not enough parameters specified");
       printUsage();
       return -1;
     }
@@ -124,38 +198,44 @@ public class RouterAdmin extends Configured implements Tool {
     // Verify that we have enough command line parameters
     if ("-add".equals(cmd)) {
       if (argv.length < 4) {
-        System.err.println("Not enough parameters specificed for cmd " + cmd);
-        printUsage();
+        System.err.println("Not enough parameters specified for cmd " + cmd);
+        printUsage(cmd);
         return exitCode;
       }
-    } else if ("-rm".equalsIgnoreCase(cmd)) {
-      if (argv.length < 2) {
-        System.err.println("Not enough parameters specificed for cmd " + cmd);
-        printUsage();
-        return exitCode;
-      }
-    } else if ("-setQuota".equalsIgnoreCase(cmd)) {
+    } else if ("-update".equals(cmd)) {
       if (argv.length < 4) {
-        System.err.println("Not enough parameters specificed for cmd " + cmd);
-        printUsage();
+        System.err.println("Not enough parameters specified for cmd " + cmd);
+        printUsage(cmd);
         return exitCode;
       }
-    } else if ("-clrQuota".equalsIgnoreCase(cmd)) {
+    } else if ("-rm".equals(cmd)) {
       if (argv.length < 2) {
-        System.err.println("Not enough parameters specificed for cmd " + cmd);
-        printUsage();
+        System.err.println("Not enough parameters specified for cmd " + cmd);
+        printUsage(cmd);
         return exitCode;
       }
-    } else if ("-safemode".equalsIgnoreCase(cmd)) {
+    } else if ("-setQuota".equals(cmd)) {
+      if (argv.length < 4) {
+        System.err.println("Not enough parameters specified for cmd " + cmd);
+        printUsage(cmd);
+        return exitCode;
+      }
+    } else if ("-clrQuota".equals(cmd)) {
       if (argv.length < 2) {
-        System.err.println("Not enough parameters specificed for cmd " + cmd);
-        printUsage();
+        System.err.println("Not enough parameters specified for cmd " + cmd);
+        printUsage(cmd);
         return exitCode;
       }
-    } else if ("-nameservice".equalsIgnoreCase(cmd)) {
+    } else if ("-safemode".equals(cmd)) {
+      if (argv.length < 2) {
+        System.err.println("Not enough parameters specified for cmd " + cmd);
+        printUsage(cmd);
+        return exitCode;
+      }
+    } else if ("-nameservice".equals(cmd)) {
       if (argv.length < 3) {
         System.err.println("Not enough parameters specificed for cmd " + cmd);
-        printUsage();
+        printUsage(cmd);
         return exitCode;
       }
     }
@@ -179,9 +259,18 @@ public class RouterAdmin extends Configured implements Tool {
     Exception debugException = null;
     exitCode = 0;
     try {
+      validateMax(argv);
       if ("-add".equals(cmd)) {
         if (addMount(argv, i)) {
-          System.out.println("Successfuly added mount point " + argv[i]);
+          System.out.println("Successfully added mount point " + argv[i]);
+        } else {
+          exitCode = -1;
+        }
+      } else if ("-update".equals(cmd)) {
+        if (updateMount(argv, i)) {
+          System.out.println("Successfully updated mount point " + argv[i]);
+        } else {
+          exitCode = -1;
         }
       } else if ("-rm".equals(cmd)) {
         if (removeMount(argv[i])) {
@@ -212,14 +301,13 @@ public class RouterAdmin extends Configured implements Tool {
       } else if ("-getDisabledNameservices".equals(cmd)) {
         getDisabledNameservices();
       } else {
-        printUsage();
-        return exitCode;
+        throw new IllegalArgumentException("Unknown Command: " + cmd);
       }
     } catch (IllegalArgumentException arge) {
       debugException = arge;
       exitCode = -1;
       System.err.println(cmd.substring(1) + ": " + arge.getLocalizedMessage());
-      printUsage();
+      printUsage(cmd);
     } catch (RemoteException e) {
       // This is a error returned by the server.
       // Print out the first line of the error message, ignore the stack trace.
@@ -252,6 +340,8 @@ public class RouterAdmin extends Configured implements Tool {
    *
    * @param parameters Parameters for the mount point.
    * @param i Index in the parameters.
+   * @return If it was successful.
+   * @throws IOException If it cannot add the mount point.
    */
   public boolean addMount(String[] parameters, int i) throws IOException {
     // Mandatory parameters
@@ -285,6 +375,9 @@ public class RouterAdmin extends Configured implements Tool {
         i++;
         short modeValue = Short.parseShort(parameters[i], 8);
         mode = new FsPermission(modeValue);
+      } else {
+        printUsage("-add");
+        return false;
       }
 
       i++;
@@ -309,6 +402,7 @@ public class RouterAdmin extends Configured implements Tool {
   public boolean addMount(String mount, String[] nss, String dest,
       boolean readonly, DestinationOrder order, ACLEntity aclInfo)
       throws IOException {
+    mount = normalizeFileSystemPath(mount);
     // Get the existing entry
     MountTableManager mountTable = client.getMountTableManager();
     GetMountTableEntriesRequest getRequest =
@@ -399,12 +493,121 @@ public class RouterAdmin extends Configured implements Tool {
   }
 
   /**
+   * Update a mount table entry.
+   *
+   * @param parameters Parameters for the mount point.
+   * @param i Index in the parameters.
+   * @return If it updated the mount point successfully.
+   * @throws IOException If there is an error.
+   */
+  public boolean updateMount(String[] parameters, int i) throws IOException {
+    // Mandatory parameters
+    String mount = parameters[i++];
+    String[] nss = parameters[i++].split(",");
+    String dest = parameters[i++];
+
+    // Optional parameters
+    boolean readOnly = false;
+    String owner = null;
+    String group = null;
+    FsPermission mode = null;
+    DestinationOrder order = null;
+    while (i < parameters.length) {
+      if (parameters[i].equals("-readonly")) {
+        readOnly = true;
+      } else if (parameters[i].equals("-order")) {
+        i++;
+        try {
+          order = DestinationOrder.valueOf(parameters[i]);
+        } catch(Exception e) {
+          System.err.println("Cannot parse order: " + parameters[i]);
+        }
+      } else if (parameters[i].equals("-owner")) {
+        i++;
+        owner = parameters[i];
+      } else if (parameters[i].equals("-group")) {
+        i++;
+        group = parameters[i];
+      } else if (parameters[i].equals("-mode")) {
+        i++;
+        short modeValue = Short.parseShort(parameters[i], 8);
+        mode = new FsPermission(modeValue);
+      } else {
+        printUsage("-update");
+        return false;
+      }
+
+      i++;
+    }
+
+    return updateMount(mount, nss, dest, readOnly, order,
+        new ACLEntity(owner, group, mode));
+  }
+
+  /**
+   * Update a mount table entry.
+   *
+   * @param mount Mount point.
+   * @param nss Nameservices where this is mounted to.
+   * @param dest Destination path.
+   * @param readonly If the mount point is read only.
+   * @param order Order of the destination locations.
+   * @param aclInfo the ACL info for mount point.
+   * @return If the mount point was updated.
+   * @throws IOException Error updating the mount point.
+   */
+  public boolean updateMount(String mount, String[] nss, String dest,
+      boolean readonly, DestinationOrder order, ACLEntity aclInfo)
+      throws IOException {
+    mount = normalizeFileSystemPath(mount);
+    MountTableManager mountTable = client.getMountTableManager();
+
+    // Create a new entry
+    Map<String, String> destMap = new LinkedHashMap<>();
+    for (String ns : nss) {
+      destMap.put(ns, dest);
+    }
+    MountTable newEntry = MountTable.newInstance(mount, destMap);
+
+    newEntry.setReadOnly(readonly);
+
+    if (order != null) {
+      newEntry.setDestOrder(order);
+    }
+
+    // Update ACL info of mount table entry
+    if (aclInfo.getOwner() != null) {
+      newEntry.setOwnerName(aclInfo.getOwner());
+    }
+
+    if (aclInfo.getGroup() != null) {
+      newEntry.setGroupName(aclInfo.getGroup());
+    }
+
+    if (aclInfo.getMode() != null) {
+      newEntry.setMode(aclInfo.getMode());
+    }
+
+    UpdateMountTableEntryRequest updateRequest =
+        UpdateMountTableEntryRequest.newInstance(newEntry);
+    UpdateMountTableEntryResponse updateResponse =
+        mountTable.updateMountTableEntry(updateRequest);
+    boolean updated = updateResponse.getStatus();
+    if (!updated) {
+      System.err.println("Cannot update mount point " + mount);
+    }
+    return updated;
+  }
+
+  /**
    * Remove mount point.
    *
    * @param path Path to remove.
+   * @return If the mount point was removed successfully.
    * @throws IOException If it cannot be removed.
    */
   public boolean removeMount(String path) throws IOException {
+    path = normalizeFileSystemPath(path);
     MountTableManager mountTable = client.getMountTableManager();
     RemoveMountTableEntryRequest request =
         RemoveMountTableEntryRequest.newInstance(path);
@@ -424,6 +627,7 @@ public class RouterAdmin extends Configured implements Tool {
    * @throws IOException If it cannot be listed.
    */
   public void listMounts(String path) throws IOException {
+    path = normalizeFileSystemPath(path);
     MountTableManager mountTable = client.getMountTableManager();
     GetMountTableEntriesRequest request =
         GetMountTableEntriesRequest.newInstance(path);
@@ -486,6 +690,9 @@ public class RouterAdmin extends Configured implements Tool {
           throw new IllegalArgumentException(
               "Cannot parse ssQuota: " + parameters[i]);
         }
+      } else {
+        throw new IllegalArgumentException(
+            "Invalid argument : " + parameters[i]);
       }
 
       i++;
@@ -513,8 +720,8 @@ public class RouterAdmin extends Configured implements Tool {
    * @throws IOException Error clearing the mount point.
    */
   private boolean clrQuota(String mount) throws IOException {
-    return updateQuota(mount, HdfsConstants.QUOTA_DONT_SET,
-        HdfsConstants.QUOTA_DONT_SET);
+    return updateQuota(mount, HdfsConstants.QUOTA_RESET,
+        HdfsConstants.QUOTA_RESET);
   }
 
   /**
@@ -549,8 +756,8 @@ public class RouterAdmin extends Configured implements Tool {
       long nsCount = existingEntry.getQuota().getFileAndDirectoryCount();
       long ssCount = existingEntry.getQuota().getSpaceConsumed();
       // If nsQuota and ssQuota were unset, clear nsQuota and ssQuota.
-      if (nsQuota == HdfsConstants.QUOTA_DONT_SET &&
-          ssQuota == HdfsConstants.QUOTA_DONT_SET) {
+      if (nsQuota == HdfsConstants.QUOTA_RESET &&
+          ssQuota == HdfsConstants.QUOTA_RESET) {
         nsCount = RouterQuotaUsage.QUOTA_USAGE_COUNT_DEFAULT;
         ssCount = RouterQuotaUsage.QUOTA_USAGE_COUNT_DEFAULT;
       } else {
@@ -593,6 +800,8 @@ public class RouterAdmin extends Configured implements Tool {
     } else if (cmd.equals("get")) {
       boolean result = getSafeMode();
       System.out.println("Safe Mode: " + result);
+    } else {
+      throw new IllegalArgumentException("Invalid argument: " + cmd);
     }
   }
 
@@ -681,6 +890,17 @@ public class RouterAdmin extends Configured implements Tool {
     for (String nsId : response.getNameservices()) {
       System.out.println(nsId);
     }
+  }
+
+  /**
+   * Normalize a path for that filesystem.
+   *
+   * @param path Path to normalize.
+   * @return Normalized path.
+   */
+  private static String normalizeFileSystemPath(final String path) {
+    Path normalizedPath = new Path(path);
+    return normalizedPath.toString();
   }
 
   /**
